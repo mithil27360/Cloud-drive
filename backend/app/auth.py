@@ -69,7 +69,13 @@ def get_admin_user(token: str = Depends(oauth2_scheme)):
         role: str = payload.get("role")
         if role != "admin":
              raise HTTPException(status_code=403, detail="Not an admin")
-        return payload
+        # Return a mock admin user object with id attribute
+        admin_user = models.User(
+            id=0,  # Special admin ID
+            email=payload.get("sub", "admin"),
+            is_active=True
+        )
+        return admin_user
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

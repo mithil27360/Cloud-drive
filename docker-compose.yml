@@ -21,7 +21,8 @@ services:
       - MINIO_SECRET_KEY=minioadmin
       - CHROMA_HOST=chromadb
       - REDIS_URL=redis://redis:6379/0
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
       - ENVIRONMENT=development
       - DEBUG=True
       - CORS_ORIGINS=*
@@ -48,6 +49,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
       - CHROMA_HOST=chromadb
       - REDIS_URL=redis://redis:6379/0
+      - GROQ_API_KEY=${GROQ_API_KEY}
     restart: always
 
   db:

@@ -483,6 +483,33 @@
                 </table>
             </div>
 
+            <!-- Files Table -->
+            <div class="table-card" style="margin-top: 24px;">
+                <div class="table-toolbar">
+                    <span class="table-title">All Files</span>
+                    <input type="text" id="searchFiles" placeholder="Search files..."
+                        style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;"
+                        oninput="filterFiles()">
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Filename</th>
+                            <th>Owner</th>
+                            <th>Size</th>
+                            <th>Type</th>
+                            <th>Uploaded</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="filesTable">
+                        <tr>
+                            <td colspan="6" class="empty-state">Loading files...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
             <!-- Audit Logs -->
             <div class="table-card" style="margin-top: 24px;">
                 <div class="table-toolbar">

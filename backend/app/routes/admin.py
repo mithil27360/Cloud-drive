@@ -63,8 +63,12 @@ class AdminChatView(BaseModel):
 # --- Helpers ---
 def log_audit(db: Session, actor_id: int, action: str, target_id: int = None, target_type: str = None, meta: dict = None):
     import json
+    # If actor_id is 0 (Admin), set to None because User(0) doesn't exist in DB
+    # and actor_id is a ForeignKey.
+    real_actor_id = actor_id if actor_id != 0 else None
+    
     log = models.AuditLog(
-        actor_id=actor_id,
+        actor_id=real_actor_id,
         action=action,
         target_id=target_id,
         target_type=target_type,

@@ -118,6 +118,7 @@ async function loadAllData() {
 
         updateKPIs();
         renderUsersTable(usersData);
+        renderFilesTable(filesData);
         renderAuditLogs(logsData);
 
     } catch (err) {
@@ -182,6 +183,7 @@ function renderUsersTable(users) {
                     <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                         <button class="btn btn-small" onclick="showUserProfile(${user.id})" title="Profile">👤</button>
                         <button class="btn btn-small" onclick="showUserChats('${escapeHtml(user.email)}')" title="Chats">💬</button>
+                        <button class="btn btn-small" onclick="filterFilesByUser('${escapeHtml(user.email)}')" title="View Files">📂</button>
                         
                         ${!user.is_verified ?
                 `<button class="btn btn-small" onclick="verifyUser(${user.id})" title="Verify" style="color: var(--success);">✅</button>` : ''}
@@ -220,6 +222,52 @@ function renderAuditLogs(logs) {
             <td class="text-muted" style="font-family: monospace; font-size: 11px;">${escapeHtml(log.metadata_json || '')}</td>
         </tr>
     `).join('');
+}
+
+function renderFilesTable(files) {
+    const tbody = document.getElementById('filesTable');
+    if (!tbody) return;
+
+    if (files.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No files found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = files.map(file => {
+        const uploaded = file.upload_date ? new Date(file.upload_date).toLocaleString() : 'N/A';
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        const sizeKB = (file.size / 1024).toFixed(1);
+        const sizeDisplay = file.size > 1024 * 1024 ? `${sizeMB} MB` : `${sizeKB} KB`;
+        const fileType = file.content_type || 'Unknown';
+
+        return `
+            <tr>
+                <td>
+                    <strong>${escapeHtml(file.filename)}</strong>
+                </td>
+                <td class="text-muted">${escapeHtml(file.owner_email)}</td>
+                <td>${sizeDisplay}</td>
+                <td><span class="badge">${escapeHtml(fileType.split('/')[1] || fileType)}</span></td>
+                <td class="text-muted">${uploaded}</td>
+                <td>
+                    <button class="btn btn-small" onclick="downloadFile(${file.id}, '${escapeHtml(file.filename)}')" title="Download">⬇️</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function filterFiles() {
+    const search = document.getElementById('searchFiles').value.toLowerCase();
+    if (!search) {
+        renderFilesTable(filesData);
+        return;
+    }
+    const filtered = filesData.filter(file =>
+        file.filename.toLowerCase().includes(search) ||
+        file.owner_email.toLowerCase().includes(search)
+    );
+    renderFilesTable(filtered);
 }
 
 function filterUsers() {
@@ -514,3 +562,18 @@ function toggleUpload(userId, disable) {
         })
         .catch(err => showToast(err.message, true));
 }
+
+function filterFilesByUser(email) {
+    const searchInput = document.getElementById('searchFiles');
+    if (!searchInput) return;
+
+    searchInput.value = email;
+    filterFiles();
+
+    // Scroll to files table
+    const searchContainer = searchInput.closest('.table-card');
+    if (searchContainer) {
+        searchContainer.scrollIntoView({ behavior: 'smooth' });
+    }
+}
+
