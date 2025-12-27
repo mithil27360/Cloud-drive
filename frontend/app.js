@@ -100,8 +100,8 @@ function setupEventListeners() {
     uploadBtn.addEventListener('click', () => fileInput.click());
     refreshBtn.addEventListener('click', fetchFiles);
 
-    // Sidebar tabs
-    document.querySelectorAll('.sidebar-item').forEach(item => {
+    // Sidebar tabs + mobile nav
+    document.querySelectorAll('.sidebar-item, .mobile-nav-item').forEach(item => {
         item.addEventListener('click', () => switchTab(item.dataset.tab));
     });
 
@@ -696,7 +696,7 @@ function removeTypingIndicator(id) {
 // Tab Switching
 function switchTab(tab) {
     activeTab = tab;
-    document.querySelectorAll('.sidebar-item').forEach(item => {
+    document.querySelectorAll('.sidebar-item, .mobile-nav-item').forEach(item => {
         item.classList.toggle('active', item.dataset.tab === tab);
     });
 

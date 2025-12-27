@@ -48,7 +48,7 @@ def register(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
         
         # Send verification email
         from ..email.service import email_service
-        verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
+        verification_link = f"http://localhost:3000/verify-email?token={verification_token}"
         
         if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
             email_service.send_verification_email(user.email, verification_link)
@@ -192,7 +192,7 @@ def resend_verification(email: str, db: Session = Depends(database.get_db)):
     # Send email
     from ..email.service import email_service
     from ..config import settings
-    verification_link = f"{settings.FRONTEND_URL}/verify-email?token={user.verification_token}"
+    verification_link = f"http://localhost:3000/verify-email?token={user.verification_token}"
     
     if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
         email_service.send_verification_email(email, verification_link)

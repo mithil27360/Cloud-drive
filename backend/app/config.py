@@ -55,9 +55,6 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"  # json or text
     
-    # Frontend URL (for email links)
-    FRONTEND_URL: str = "http://localhost:3000"
-    
     # Email Configuration (for Magic Links)
     SMTP_SERVER: str = "smtp.gmail.com"
     SMTP_PORT: int = 587

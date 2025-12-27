@@ -183,7 +183,6 @@ function renderUsersTable(users) {
                     <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                         <button class="btn btn-small" onclick="showUserProfile(${user.id})" title="Profile">👤</button>
                         <button class="btn btn-small" onclick="showUserChats('${escapeHtml(user.email)}')" title="Chats">💬</button>
-                        <button class="btn btn-small" onclick="filterFilesByUser('${escapeHtml(user.email)}')" title="View Files">📂</button>
                         
                         ${!user.is_verified ?
                 `<button class="btn btn-small" onclick="verifyUser(${user.id})" title="Verify" style="color: var(--success);">✅</button>` : ''}
@@ -562,18 +561,3 @@ function toggleUpload(userId, disable) {
         })
         .catch(err => showToast(err.message, true));
 }
-
-function filterFilesByUser(email) {
-    const searchInput = document.getElementById('searchFiles');
-    if (!searchInput) return;
-
-    searchInput.value = email;
-    filterFiles();
-
-    // Scroll to files table
-    const searchContainer = searchInput.closest('.table-card');
-    if (searchContainer) {
-        searchContainer.scrollIntoView({ behavior: 'smooth' });
-    }
-}
-
