@@ -1,0 +1,63 @@
+version: '3.8'
+
+# Production configuration with scaling
+# Use: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  backend:
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=False
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  celery_worker:
+    command: celery -A app.tasks.celery_app.celery worker --loglevel=warning --concurrency=4
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1'
+        reservations:
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  db:
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-strongpassword}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  redis:
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-redispassword}
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'

@@ -1,0 +1,111 @@
+services:
+  backend:
+    build: ./backend
+    container_name: ai_drive_backend
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+      - minio
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/aiclouddrive
+      - SECRET_KEY=your-super-secret-key-change-this
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - CHROMA_HOST=chromadb
+      - REDIS_URL=redis://redis:6379/0
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - ENVIRONMENT=development
+      - DEBUG=True
+      - CORS_ORIGINS=*
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+    restart: always
+
+  celery_worker:
+    build: ./backend
+    container_name: ai_drive_celery
+    command: celery -A app.tasks.celery_app.celery worker --loglevel=info
+    depends_on:
+      - db
+      - redis
+      - minio
+      - backend
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/aiclouddrive
+      - SECRET_KEY=your-super-secret-key-change-this
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - CHROMA_HOST=chromadb
+      - REDIS_URL=redis://redis:6379/0
+    restart: always
+
+  db:
+    image: postgres:15-alpine
+    container_name: ai_drive_db
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=aiclouddrive
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  minio:
+    image: minio/minio
+    container_name: ai_drive_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai_drive_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  chromadb:
+    image: chromadb/chroma
+    container_name: ai_drive_chroma
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: always
+
+  frontend:
+    build: ./frontend
+    container_name: ai_drive_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: always
+
+volumes:
+  postgres_data:
+  minio_data:
+  redis_data:
+  chroma_data:
