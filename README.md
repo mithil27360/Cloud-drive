@@ -1,88 +1,33 @@
 # AI Cloud Drive 
 
-A self-hosted file storage system with **RAG powered semantic search** (Retrieval Augmented Generation). Upload documents, ask questions in natural language, and get intelligent answers from your files.
+A self-hosted file storage system with **RAG-powered semantic search**. Upload documents, ask questions in natural language, and get intelligent answers from your files.
 
-## Project Scope and Intent
+## Project Scope
 
-This project is designed as a **learning focused, production inspired system** to demonstrate end to end architecture, AI/ML integration, and backend engineering patterns.
+A **learning-focused, production-inspired system** demonstrating end-to-end architecture, AI/ML integration, and backend engineering patterns. Designed for 10-100 users; horizontal scaling patterns are demonstrated architecturally.
 
-It is not intended to replace mature platforms like Google Drive or Dropbox, but to showcase system design decisions, trade-offs, and scalability considerations in a controlled environment.
-
-**Scale Assumptions**: Designed for 10-100 users with moderate document volumes; horizontal scaling patterns are demonstrated architecturally but not load tested.
-
-## Design Trade-offs and Assumptions
+## Design Trade-offs
 
 | Decision | Trade-off | Rationale |
 |----------|-----------|-----------|
-| ChromaDB for vectors | Simplicity over scale | Local first, no external dependencies; would need managed vector DB at scale |
-| Async embedding generation | Latency vs UX | Avoids blocking uploads; users see "processing" status |
-| JWT stateless auth | Simplicity vs session control | No server side session state; token revocation requires expiry |
-| Groq cloud LLM | Speed vs privacy | Fast inference; self-hosted LLM would add latency and infrastructure |
-| MinIO for storage | S3 compatibility vs managed service | Easy local dev; production could use AWS S3 directly |
+| ChromaDB for vectors | Simplicity over scale | Local-first, no external dependencies |
+| Async embedding generation | Latency vs UX | Avoids blocking uploads |
+| JWT stateless auth | Simplicity vs session control | No server-side session state |
+| Groq cloud LLM | Speed vs privacy | Fast inference; self-hosted adds latency |
+| MinIO for storage | S3 compatibility vs managed service | Easy local dev; prod uses AWS S3 |
 
-## RAG Quality and Limitations
+## RAG Quality & Limitations
 
-- Responses are generated **only from retrieved document chunks**
-- If semantic similarity scores fall below threshold, system returns "insufficient context" instead of hallucinating
-- Chunk size (500 tokens) and overlap (50 tokens) tuned for general documents; may need adjustment for specialized content
-- System does not guarantee factual correctness beyond provided document context
-- No explicit cross document reasoning; retrieval focuses on high relevance chunks to reduce context dilution
+- Responses generated **only from retrieved document chunks**
+- Returns "insufficient context" instead of hallucinating when similarity scores are low
+- Chunk size (500 tokens) tuned for general documents
+- No cross-document reasoning; focuses on high-relevance chunks
 
-**Retrieval Strategy**: Top-k semantic similarity search (k=5) with cosine similarity scores; retrieved chunks are concatenated as context for LLM generation.
-
-## Security Considerations
-
-| Aspect | Implementation | Out of Scope |
-|--------|----------------|--------------|
-| Authentication | JWT tokens validated per request | OAuth/SSO integration |
-| Authorization | Per user file isolation | Fine-grained permissions |
-| Admin Actions | Audit logged with timestamps | Intrusion detection |
-| Data Storage | Server side encryption supported (MinIO) | End to end encryption |
-| Network | Nginx reverse proxy | Zero-trust networking |
-
-**Threat Model**: This system assumes trusted internal network. External deployment requires additional hardening (rate limiting, WAF, etc.)
-
-## Observability and Monitoring (Planned)
-
-- Structured logging across API, worker, and RAG pipeline
-- Latency tracking for ingestion, retrieval, and generation stages
-- Error rate monitoring for background tasks
-- Metrics intended for future Prometheus/Grafana integration
-
-##  Key Features
-
-###  RAG Engineered Document Search (RAG)
-- **Semantic Understanding**: Uses vector embeddings to understand document meaning, not just keywords
-- **Natural Language Queries**: Ask questions like "What are the key findings in my research papers?"
-- **Context Aware Responses**: LLM generates answers using relevant document chunks as context
-- **Multi Document Support**: Search across PDF, TXT, and Markdown files simultaneously
-
-### Secure Authentication System
-- **JWT Based Auth**: Stateless authentication with secure token management
-- **Email Verification**: SMTP based email confirmation for new accounts
-- **Role Based Access**: Admin and regular user roles with different permissions
-- **Account Security**: Failed login tracking and account suspension capabilities
-- **Token Storage**: Client side storage for simplicity; production deployments may prefer httpOnly cookies
-
-###  Enterprise File Management
-- **S3 Compatible Storage**: MinIO provides reliable, scalable object storage
-- **Background Indexing**: Celery workers process documents asynchronously
-- **File Isolation**: Each user's files are completely isolated from others
-- **Download & Share**: Secure file download with proper access control
-
-###  Admin Dashboard
-- **User Analytics**: Monitor user activity, storage usage, and query statistics
-- **User Management**: Verify, suspend, or delete users with cascading file cleanup
-- **Audit Logging**: Track all administrative actions for security compliance
-- **System Overview**: Real-time KPIs for users, files, and queries
-
-
-##  System Architecture
+## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLIENT LAYER                            │
-├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
 │  │  Dashboard  │    │  Admin UI   │    │  API Docs   │         │
 │  │  (HTML/JS)  │    │  (HTML/JS)  │    │  (Swagger)  │         │
@@ -92,20 +37,15 @@ It is not intended to replace mature platforms like Google Drive or Dropbox, but
           ▼                  ▼                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       NGINX REVERSE PROXY                        │
-│              (SSL Termination, Load Balancing)                   │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                       APPLICATION LAYER                          │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │                    FastAPI Backend                       │    │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐    │    │
-│  │  │  Auth   │  │  Files  │  │   RAG   │  │  Admin  │    │    │
-│  │  │ Routes  │  │ Routes  │  │ Engine  │  │ Routes  │    │    │
-│  │  └─────────┘  └─────────┘  └─────────┘  └─────────┘    │    │
-│  └─────────────────────────────────────────────────────────┘    │
+│                       FastAPI Backend                            │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐            │
+│  │  Auth   │  │  Files  │  │   RAG   │  │  Admin  │            │
+│  │ Routes  │  │ Routes  │  │ Engine  │  │ Routes  │            │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘            │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
           ┌───────────────────┼───────────────────┐
@@ -113,129 +53,131 @@ It is not intended to replace mature platforms like Google Drive or Dropbox, but
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
 │   PostgreSQL    │ │     MinIO       │ │     Redis       │
 │   (Metadata)    │ │  (File Storage) │ │  (Task Queue)   │
-│                 │ │                 │ │                 │
-│ • Users         │ │ • PDF files     │ │ • Celery broker │
-│ • Files         │ │ • Documents     │ │ • Result store  │
-│ • Chat History  │ │ • User folders  │ │                 │
-│ • Audit Logs    │ │                 │ │                 │
 └─────────────────┘ └─────────────────┘ └────────┬────────┘
                                                   │
                                                   ▼
                               ┌─────────────────────────────────┐
                               │         CELERY WORKER           │
-                              │    (Background Processing)      │
-                              │                                 │
-                              │  • Document text extraction     │
+                              │  • Text extraction              │
                               │  • Chunk splitting              │
-                              │  • Vector embedding generation  │
+                              │  • Vector embedding             │
                               │  • ChromaDB indexing            │
                               └────────────────┬────────────────┘
                                                │
                     ┌──────────────────────────┼──────────────────────────┐
                     ▼                          ▼                          ▼
           ┌─────────────────┐        ┌─────────────────┐        ┌─────────────────┐
-          │    ChromaDB     │        │    Groq API     │        │   Sentence Transformers   │
-          │  (Vector Store) │        │  (LLM - Llama)  │        │  (Embeddings)   │
-          │                 │        │                 │        │                 │
-          │ Semantic search │        │ Answer generation│       │ Text → Vectors  │
-          │ Similarity match│        │ Context synthesis│       │ 384 dim vectors │
+          │    ChromaDB     │        │    Groq API     │        │   Sentence      │
+          │  (Vector Store) │        │  (LLM - Llama)  │        │  Transformers   │
           └─────────────────┘        └─────────────────┘        └─────────────────┘
 ```
 
+## Key Features
 
-##  Implementation Details
+### RAG-Powered Search
+- Semantic understanding with vector embeddings
+- Natural language queries across PDF, TXT, and Markdown files
+- Context-aware responses with source citations
 
-### RAG Pipeline
-1. **Document Upload** → File stored in MinIO, metadata in PostgreSQL
-2. **Background Indexing** → Celery worker extracts text, splits into chunks
-3. **Vector Embedding** → Sentence Transformers model converts chunks to 384 dim vectors
-4. **Storage** → Vectors stored in ChromaDB with document references
-5. **Query Processing** → User query embedded, similar chunks retrieved
-6. **Answer Generation** → Groq LLM synthesizes answer from relevant context
+### Authentication & Security
+- JWT-based auth with email verification
+- Role-based access (admin/user)
+- Rate limiting and security middleware
 
-### Authentication Flow
-1. **Registration** → User submits email/password
-2. **Verification Email** → SMTP sends verification link
-3. **Email Confirmation** → User clicks link, account activated
-4. **Login** → JWT token issued, stored in localStorage
-5. **Protected Routes** → Token validated on each API request
+### File Management
+- S3-compatible storage (MinIO)
+- Background indexing with Celery
+- Per-user file isolation
 
-### Admin Cascading Delete
-When an admin deletes a user:
-1. All user files deleted from MinIO storage
-2. File records removed from PostgreSQL
-3. Chat history purged
-4. User record deleted
-5. Action logged in audit trail
+### Admin Dashboard
+- User management & analytics
+- Audit logging
+- System KPIs
 
+## Security
 
-## �️ Tech Stack
+| Aspect | Implementation |
+|--------|----------------|
+| Authentication | JWT tokens per request |
+| Authorization | Per-user file isolation |
+| Admin Actions | Audit logged |
+| Network | Nginx reverse proxy |
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Backend** | FastAPI (Python) | REST API, async support |
-| **Frontend** | Vanilla JS, HTML5, CSS3 | Zero dependency UI |
-| **Database** | PostgreSQL | Relational data storage |
-| **Object Storage** | MinIO | S3 compatible file storage |
-| **Vector DB** | ChromaDB | Semantic similarity search |
-| **LLM** | Groq API (Llama 3.3 70B) | Fast inference, answer generation |
-| **Embeddings** | Sentence Transformers (all MiniLM-L6-v2) | Text vectorization |
-| **Task Queue** | Celery + Redis | Background job processing |
-| **Reverse Proxy** | Nginx | Routing, static file serving |
-| **Containerization** | Docker Compose | Multi-service orchestration |
+> ⚠️ **Production**: Change all default credentials in `.env`. Do not expose MinIO ports publicly.
 
+## Tech Stack
 
-##  Quick Start
+| Component | Technology |
+|-----------|------------|
+| Backend | FastAPI (Python) |
+| Frontend | Vanilla JS, HTML5, CSS3 |
+| Database | PostgreSQL |
+| Storage | MinIO (S3-compatible) |
+| Vector DB | ChromaDB |
+| LLM | Groq API (Llama 3.3 70B) |
+| Embeddings | Sentence Transformers |
+| Task Queue | Celery + Redis |
+| Proxy | Nginx |
+| Deploy | Docker Compose |
+
+## Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose
-- Groq API Key ([console.groq.com](https://console.groq.com))
+- [Groq API Key](https://console.groq.com)
 - SMTP credentials (for email verification)
 
 ### Setup
 ```bash
-# Clone and configure
 git clone https://github.com/mithil27360/Cloud-drive.git
-cd ai-cloud-drive
+cd Cloud-drive
 cp .env.example .env
 # Edit .env with your API keys and SMTP settings
 
-# Launch
 docker-compose up --build -d
 
-# Access
+# Access:
 # Frontend: http://localhost:3000
 # API Docs: http://localhost:8000/docs
 # Admin: http://localhost:3000/admin.html
 ```
 
-
-##  Project Structure
+## Project Structure
 
 ```
-ai-cloud-drive/
+Cloud-drive/
 ├── backend/
 │   ├── app/
-│   │   ├── routes/          # API endpoints (auth, files, admin)
-│   │   ├── rag/             # RAG engine (indexer, llm, engine)
+│   │   ├── routes/          # API endpoints
+│   │   ├── rag/             # RAG engine
 │   │   ├── storage/         # MinIO client
-│   │   ├── tasks/           # Celery background tasks
+│   │   ├── tasks/           # Celery tasks
 │   │   ├── models.py        # SQLAlchemy models
-│   │   └── auth.py          # JWT authentication
-│   └── tests/               # pytest test suite
+│   │   └── auth.py          # JWT auth
+│   └── tests/               # pytest suite
 ├── frontend/
-│   ├── index.html           # Main dashboard
+│   ├── index.html           # Dashboard
 │   ├── admin.html           # Admin panel
-│   ├── app.js               # Dashboard logic
-│   └── admin.js             # Admin logic
-├── docker-compose.yml       # Service orchestration
-└── .env.example             # Environment template
+│   └── app.js               # App logic
+├── docker-compose.yml
+└── .env.example
 ```
 
+## RAG Pipeline
 
-##  License
+1. **Upload** → File stored in MinIO, metadata in PostgreSQL
+2. **Index** → Celery extracts text, splits into chunks
+3. **Embed** → Sentence Transformers → 384-dim vectors
+4. **Store** → Vectors indexed in ChromaDB
+5. **Query** → User query embedded, similar chunks retrieved
+6. **Generate** → Groq LLM synthesizes answer from context
 
-MIT License - Use freely for learning or production.
+## Observability (Planned)
 
+- Structured logging across API and workers
+- Latency tracking for RAG stages
+- Prometheus/Grafana integration ready
 
-*Built for learning cloud architecture, AI/ML integration, and full-stack development.*
+## License
+
+MIT License
