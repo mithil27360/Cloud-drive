@@ -5,25 +5,34 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Production-grade system prompt
-SYSTEM_PROMPT = """You are an expert AI research assistant helping users understand and analyze their documents.
+# NEUTRAL SYSTEM PROMPT - NO FORCED FORMATTING
+SYSTEM_PROMPT = """You are a helpful study assistant. Answer questions using the provided context.
 
-Your responsibilities:
-1. Provide accurate, comprehensive answers based ONLY on the provided context
-2. Cite specific sections using the format [Source ID] (e.g., [Source 1])
-3. Use the page numbers provided in the context for specific claims
-4. If the context doesn't contain enough information, clearly state this
-5. Use clear, professional language
+### RULES:
 
-Guidelines:
-- EVERY factual claim must be backed by a citation [Source ID]
-- Do not cite page numbers directly (e.g. "on page 5"), use the Source ID
-- Use bullet points for clarity when appropriate
-- Quote relevant passages when helpful
+1. **Answer naturally**: Respond in the most appropriate format for the question and content.
+2. **Be direct**: Start with the answer, not preambles.
+3. **Cite sources**: When referencing specific information, mention the page if available.
+4. **No invention**: Only use information from the provided context.
+5. **Match the content**: 
+   - For exam questions/PYQs: List the questions and answers directly
+   - For lecture notes: Explain the concepts clearly
+   - For any document: Summarize the key points naturally
+
+### CONTEXT FORMAT:
+[Source: Section, p. X]
+Content here...
+
+### DO NOT:
+- Force a "Problem/Method/Results" structure on non-research documents
+- Treat exam papers or PYQs as research papers
+- Add unnecessary academic formatting
+
+Just answer naturally and helpfully.
 """
 
 def _format_context(chunks: List[Dict]) -> str:
-    """Format chunks into well-structured context."""
+    """Format chunks with page metadata for LLM to cite."""
     if not chunks:
         return "No relevant context found."
     
@@ -32,25 +41,38 @@ def _format_context(chunks: List[Dict]) -> str:
         metadata = chunk.get("metadata", {})
         content = chunk.get("content", "")
         
-        # Add metadata if available
-        meta_info = []
-        if "page_number" in metadata:
-            meta_info.append(f"Page {metadata['page_number']}")
-        elif "section_heading" in metadata:
-            meta_info.append(f"Section: {metadata['section_heading']}")
+        # Extract page information from metadata
+        page_start = metadata.get("page_start", metadata.get("page", 1))
+        page_end = metadata.get("page_end", page_start)
+        section = metadata.get("section", "General")
         
-        meta_str = f" ({', '.join(meta_info)})" if meta_info else ""
+        # Format page range
+        if page_start == page_end:
+            page_info = f"p. {page_start}"
+        else:
+            page_info = f"pp. {page_start}-{page_end}"
         
-        context_parts.append(f"[Source {idx}{meta_str}]\n{content}\n")
+        # Build header with page info
+        header = f"[Source: {section}, {page_info}]"
+        context_parts.append(f"{header}\n{content}\n")
     
     return "\n---\n".join(context_parts)
 
-def generate_response(query: str, context_chunks: List[Dict]) -> str:
+def generate_response(query: str, context_chunks: List[Dict], filename: str = "document.pdf") -> str:
     """
     Generate high-quality response using Groq API.
     
-    Uses production-grade prompt engineering for better answers.
+    Uses 7-layer production pipeline:
+    1. Document Type Detection
+    2. Intent Routing
+    3. Domain Rules
+    4. Context Quality Check
+    5. Answer Self-Validation
+    6. Style Adapter
+    7. Failure Logging
     """
+    from .production_pipeline import run_pipeline, post_validate, log_failure
+    
     # Format context with structure
     context = _format_context(context_chunks)
     
@@ -59,11 +81,18 @@ def generate_response(query: str, context_chunks: List[Dict]) -> str:
     if len(context) > MAX_CONTEXT_LENGTH:
         context = context[:MAX_CONTEXT_LENGTH] + "\n\n[Context truncated due to length...]"
     
-    # Build messages with production prompt
+    # Run 7-layer pipeline (Layers 1-4, 6)
+    pipeline_result = run_pipeline(query, filename, context_chunks)
+    logger.info(f"Pipeline: doc={pipeline_result.document_type.value}, intent={pipeline_result.intent.value}")
+    
+    if pipeline_result.issues:
+        logger.warning(f"Pipeline issues: {pipeline_result.issues}")
+    
+    # Build messages with pipeline-generated prompt
     messages = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT
+            "content": pipeline_result.system_prompt
         },
         {
             "role": "user",
@@ -72,7 +101,7 @@ def generate_response(query: str, context_chunks: List[Dict]) -> str:
 
 Question: {query}
 
-Please provide a comprehensive answer based on the context above. If the context contains relevant information, explain it clearly and cite specific sources using only the [Source ID] format."""
+Answer based on the context above. Be direct and match the document style."""
         }
     ]
     
@@ -96,7 +125,16 @@ Please provide a comprehensive answer based on the context above. If the context
         result = response.json()
         
         if "choices" in result and len(result["choices"]) > 0:
-            return result["choices"][0]["message"]["content"]
+            answer = result["choices"][0]["message"]["content"]
+            
+            # Layer 5: Post-validation
+            is_valid, issues = post_validate(answer, query, pipeline_result, context)
+            if not is_valid:
+                logger.warning(f"Answer validation failed: {issues}")
+                # Don't regenerate for now, just log
+                # Future: could retry with stricter prompt
+            
+            return answer
         else:
             return "No response generated."
             
