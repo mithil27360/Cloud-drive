@@ -11,14 +11,16 @@
 
 ## System Design Philosophy
 
-This project explores the engineering challenges of building a **Retrieval Augmented Generation (RAG)** system that prioritizes **correctness over generic capability**.
+## Project Motivation
 
-Unlike standard implementations, this system moves beyond simple vector lookup to address "keyword blindness" and "structural drift" through a **multi-stage processing pipeline**. It serves as an experimentation framework for measuring retrieval precision–latency tradeoffs under different architectural choices.
+Standard RAG tutorials often skip over real-world edge cases like domain-specific rules (e.g., differentiating a "Stack" from a "Queue").
 
-**Core Design Principles:**
-1.  **Separation of Concerns**: Retrieval, Reasoning, and formatting are decoupled stages.
-2.  **Explicit Guardrails**: Domain rules are hard coded constraints, not learned behaviors.
-3.  **Fail Fast Validation**: Answers are self validated against rigid criteria before being returned to the user.
+**Goal:** Build a RAG system that goes beyond simple vector retrieval by enforcing strict correctness constraints. This project implements a **multi-stage pipeline** to experiment with how much "guardrailing" is needed to stop hallucinations in technical domains.
+
+**Key Features:**
+1.  **Hybrid Retrieval**: Combining vector search with keyword matching.
+2.  **Strict Validation**: Code to explicitly reject wrong answers.
+3.  **Experimental Config**: Hard-coded constraints to test system limits.
 
 ---
 
@@ -53,7 +55,7 @@ This system designed to solve common RAG failure modes:
 
 ### 1. Hybrid Search with RRF
 **Mechanism:** Combines Dense (Vector) retrieval with Sparse (BM25) keyword search using **Reciprocal Rank Fusion (RRF)**.
-**Why:** Solves "keyword blindness" where vector models miss specific acronyms (e.g., "TCP") or exact identifiers.
+**Why:** Addresses "keyword blindness" where vector models miss specific acronyms (e.g., "TCP") or exact identifiers.
 
 ### 2. Two Stage Retrieval & Re-ranking
 **Mechanism:** First stage uses a fast Bi-Encoder for candidate generation. Second stage uses a **Cross-Encoder (ms-marco-MiniLM-L-6-v2)** for high precision re-ranking.
@@ -61,7 +63,7 @@ This system designed to solve common RAG failure modes:
 
 ### 3. Query Optimization (HyDE)
 **Mechanism:** Implements **Hypothetical Document Embeddings (HyDE)** and Multi Query Expansion to generate a hypothetical answer embedding used only for retrieval.
-**Why:** Bridges the semantic gap between short queries and detailed document passages.
+**Why:** Heuristic approach to bridging the semantic gap between short queries and detailed document passages.
 
 ---
 
@@ -70,15 +72,16 @@ This system designed to solve common RAG failure modes:
 The core contribution is a **multi stage pipeline** (implemented as seven explicit stages) designed to reduce hallucination risk and enforce explicit domain constraints.
 
 ### 1. Document Classification (Deterministic)
-**Solution:** Regex based classifier detects content type (`EXAM`, `RESEARCH`, `LEGAL`) to prevent structural drift (e.g., treating an Exam Paper like a generic article).
+**Approach:** Regex based classifier detects content type (`EXAM`, `RESEARCH`, `LEGAL`) to reduce structural drift.
+*   *Limitation*: Dependent on header keywords; not robust to OCR errors or ambiguous documents.
 
 ### 2. Intent Routing (Semantic)
 **Solution:** Semantic routing layer allocates compute dynamically via **User Intent classification** (`SUMMARIZE`, `ANSWER_QUESTION`, `COMPARE`).
 
 ### 3. Domain Reference Constraints
-**Solution:** Injected rule engine enforces domain truths:
-*   `Data Structures`: Enforces Queue=FIFO, Stack=LIFO constraints.
-*   `Medical/Legal`: Enforces "Negative Constraints" (e.g., no accumulation of probability for dosages).
+**Solution:** A simple rule engine checks answers against known facts:
+*   `Data Structures`: Verifies definitions (e.g. Queue must be FIFO).
+*   `Medical/Legal`: Prevents answering if safety keywords are triggered.
 
 ### 4. Context Sufficiency Check
 **Solution:** Pre generation gate rejects retrieval sets with relevance scores < 0.3, reducing hallucination by refusing to answer when ignorant.
@@ -91,7 +94,8 @@ The core contribution is a **multi stage pipeline** (implemented as seven explic
 ## Deep Data Handling
 
 ### Academic Parser
-Instead of generic text extraction, the system uses a **layout aware parser** (regex heavy) that detects multi column layouts, strips headers/footers, and classifies sections (Abstract vs Method).
+Instead of generic text extraction, the system uses a **rules-based layout parser** (regex) that attempts to detect multi column layouts and sections.
+*   *Limitation*: Relies on consistent formatting standard (e.g., two-column IEEE style); fails on non-standard PDFs.
 
 ### Parent Child Chunking
 Implements **"Small to Big"** retrieval: retrieves small chunks for vector precision, but feeds the parent context window to the LLM for coherent reasoning.
@@ -154,7 +158,6 @@ curl localhost:8000/health
 
 ---
 
-##  Note
+## Learning Outcomes
 
-This project demonstrates a rigorous approach to **AI Engineering**. It is not just a chatbot, but an experimentation laboratory for testing hypotheses about RAG consistency, latency, and correctness.
-
+This project was built to understand the limits of LLMs in production-like environments. It focuses on **system design tradeoffs** (Consistency vs Latency) rather than just prompt engineering.
