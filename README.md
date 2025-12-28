@@ -13,15 +13,14 @@
 
 ## Project Motivation
 
-Standard RAG tutorials often skip over real-world edge cases like domain-specific rules (e.g., enforcing core data-structure invariants (e.g., Stack = LIFO, Queue = FIFO)).
+Standard RAG tutorials often skip over real-world edge cases like domain-specific rules (e.g., enforcing core data structure invariants such as Stack = LIFO and Queue = FIFO ).
 
-**Goal:** Build a RAG system that goes beyond simple vector retrieval by enforcing explicit domain invariants and negative constraints . This project implements a **multi-stage pipeline** to experiment with how much "guardrailing" is needed to stop hallucinations in technical domains.
+**Goal:** Build a RAG system that goes beyond simple vector retrieval by enforcing explicit domain invariants and negative constraints. This project implements a **multi-stage pipeline** to experiment with how much "guardrailing" is needed to reduce hallucinations in technical domains.
 
 **Key Design Decisions:**
-1.  **Hybrid retrieval to balance semantic recall and exact-match precision.
-2.  **Explicit post- eneration validation to enforce domain invariants
-3.  **Hard coded constraints to study failure modes before generaliza
-
+1. **Hybrid retrieval** to balance semantic recall and exact-match precision  
+2. **Explicit post-generation validation** to enforce domain invariants  
+3. **Hard-coded constraints** to study failure modes before generalization  
 ---
 
 ## Architecture & Data Flow
@@ -51,7 +50,7 @@ Standard RAG tutorials often skip over real-world edge cases like domain-specifi
 
 ##  Retrieval Architecture
 
-This system designed to solve common RAG failure modes:
+This system is designed to address common RAG failure modes.
 
 ### 1. Hybrid Search with RRF
 **Mechanism:** Combines Dense (Vector) retrieval with Sparse (BM25) keyword search using **Reciprocal Rank Fusion (RRF)**.
@@ -69,7 +68,8 @@ This system designed to solve common RAG failure modes:
 
 ## RAG Pipeline Design (The "Guardrails")
 
-The core contribution is a **multi stage pipeline** (implemented as seven explicit stages) designed to reduce hallucination risk and enforce explicit domain constraints.
+The core contribution is a **multi stage pipeline** (implemented as seven explicit stages) designed to reduce hallucination risk by refusing to answer when context is insufficient.
+
 
 ### 1. Document Classification (Deterministic)
 **Approach:** Regex based classifier detects content type (`EXAM`, `RESEARCH`, `LEGAL`) to reduce structural drift.
@@ -84,7 +84,8 @@ The core contribution is a **multi stage pipeline** (implemented as seven explic
 *   `Medical/Legal`: Prevents answering if safety keywords are triggered.
 
 ### 4. Context Sufficiency Check
-**Solution:** Pre generation gate rejects retrieval sets with relevance scores < 0.3, reducing hallucination by refusing to answer when ignorant.
+**Solution:** Pre generation gate rejects retrieval sets with relevance scores < 0.3, reducing hallucination risk by refusing to answer when context is insufficient
+
 
 ### 5. Answer Self Validation
 **Solution:** Post generation pass checks the output against the active Domain Rules using the **Answer Validator**. If a rule is violated (e.g., "Queue is LIFO"), the answer is discarded.
