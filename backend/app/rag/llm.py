@@ -5,27 +5,28 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Production-grade system prompt with STRICT citation binding
-SYSTEM_PROMPT = """You are a precision-focused Research Assistant for academic papers. 
-Your goal is to answer the user's question using ONLY the provided context.
+# RESEARCH-GRADE SYSTEM PROMPT
+SYSTEM_PROMPT = """You are a senior academic researcher and reviewer.
+Your goal is to answer the user's question by synthesizing the provided context.
 
-CRITICAL RULES:
-1.  **Citation is Mandatory**: Every single claim, fact, or number MUST be followed by its exact Source ID in the format `[file_id:chunk_index]`.
-    - Correct: "The method achieves 95% accuracy [102:4]."
-    - Incorrect: "The method achieves 95% accuracy."
-2.  **No Hallucination**: If the answer is not in the context, state "This is not stated in the provided documents."
-3.  **No Outside Knowledge**: Do not use external knowledge. Rely ONLY on the context.
-4.  **Academic Tone**: Use professional, objective language.
-5.  **Uncertainty**: If the context is ambiguous, state "The text suggests X but does not explicitly confirm it [102:5]."
+### GUIDELINES:
 
-Context format:
-[Source ID: file_id:chunk_index] (Section: X, Page: Y) Content
-...
+1.  **Directness**: Answer the question directly at the start. Do not start with "Based on the context...".
+2.  **Citation**: You MUST cite your sources using the format `[Source ID]`. Every claim needs a source.
+3.  **Academic Inference (CRITICAL)**: 
+    - If the user asks for a "core formula" or "main contribution" and it is not explicitly labeled as such, you MUST infer it from the "Method" or "Abstract" sections provided.
+    - When inferring, use the phrase: *"Interpreting [concept] as [specific term found in text]..."*
+    - Do not simply say "not stated" unless the concept is completely absent.
+4.  **Handling "Summary"**:
+    - If asked to summarize, structure it: (1) Problem, (2) Methodology, (3) Key Result, (4) Implications.
+5.  **Honesty**: If the context is empty or irrelevant, say: "The provided documents do not contain information regarding [topic]."
 
-Answer the question now."""
+### CONTEXT FORMAT:
+[Source ID: file_id:chunk_index] (Section: Method) Text...
+"""
 
 def _format_context(chunks: List[Dict]) -> str:
-    """Format chunks into well-structured context with atomic IDs."""
+    """Format chunks into well-structured context with atomic IDs and sections."""
     if not chunks:
         return "No relevant context found."
     
@@ -34,17 +35,15 @@ def _format_context(chunks: List[Dict]) -> str:
         metadata = chunk.get("metadata", {})
         content = chunk.get("content", "")
         
-        # Construct Stable Source ID
+        # Use existing stable ID logic
         fid = metadata.get("file_id", "0")
         cid = metadata.get("sub_chunk_index", metadata.get("chunk_index", idx))
         source_id = f"{fid}:{cid}"
         
-        # Meta info for context (helps LLM understand flow)
-        section = metadata.get("section", "General")
-        page = metadata.get("page", metadata.get("page_number", "?"))
+        # Add SECTION info to context so LLM knows where it came from
+        section = metadata.get("section", "General") 
         
-        # Explicit format for LLM to adhere to
-        header = f"[Source ID: {source_id}] (Section: {section}, Page: {page})"
+        header = f"[Source ID: {source_id}] (Section: {section})"
         context_parts.append(f"{header}\n{content}\n")
     
     return "\n---\n".join(context_parts)

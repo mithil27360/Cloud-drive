@@ -53,52 +53,71 @@ class RAGEngine:
         start_time = time.time()
         
         try:
-            # 1. Importance Filter Analysis
+            # 1. Intent Classification & Importance
             importance_filter = self._analyze_importance(query_text)
+            intent = query_optimizer.classify_intent(query_text)
+            logger.info(f"[{trace_id}] Intent Detected: {intent}")
             
             # --- PHASE H: Query Optimization ---
             # 1a. Generate HyDE Document (for implicit context expansion)
-            # Only use for short/vague queries (< 10 words) to avoid noise
             search_query = query_text
             if len(query_text.split()) < 10:
                 hyde_doc = query_optimizer.generate_hyde_doc(query_text)
                 if hyde_doc:
-                    # Append HyDE concept to query for vector search (boosts recall)
-                    # We blend it: 70% original, 30% hypothetical
-                    # Simple Append Strategy for now:
                     logger.info(f"[{trace_id}] HyDE Expanded: {hyde_doc[:50]}...")
-                    # We search using the generated answer as it mathematically aligns with target chunks
                     search_query = hyde_doc 
             # -----------------------------------
             
-            # 2. Parallel Retrieval
-            # Fetch more candidates for fusion (3x to 5x of final n)
-            candidate_k = n_results * 5 if file_ids else n_results * 3
+            # 2. Strategy Selection
+            final_candidates = []
             
-            # Vector Search uses ENHANCED query (HyDE)
-            vector_docs = self._vector_search(search_query, user_id, file_ids, candidate_k, importance_filter)
+            # STRATEGY A: Targeted Section Search (The "Research-Grade" logic)
+            if intent != "GENERAL":
+                target_sections = self._map_intent_to_sections(intent)
+                logger.info(f"[{trace_id}] Targeting Sections: {target_sections}")
+                
+                if target_sections:
+                    # Fetch more candidates for targeted search to ensure coverage
+                    targeted_docs = self._vector_search_targeted(
+                        search_query, user_id, file_ids, k=n_results*4, sections=target_sections
+                    )
+                    final_candidates.extend(targeted_docs)
+                    logger.info(f"[{trace_id}] Targeted Search found {len(targeted_docs)} chunks")
+
+            # STRATEGY B: Global Search (Fallback & Supplement)
+            # We always run this but with fewer K if targeted found something, 
+            # or full K if intent is General.
+            global_k = n_results * 2 if final_candidates else n_results * 5
             
-            # BM25 uses ORIGINAL query (exact keyword match)
-            bm25_docs = self._bm25_search(query_text, user_id, file_ids, candidate_k)
+            global_docs = self._vector_search(
+                search_query, user_id, file_ids, k=global_k, importance=importance_filter
+            )
             
-            # 3. Fusion
-            fused_docs = hybrid_retriever.reciprocal_rank_fusion(vector_docs, bm25_docs)
-            logger.info(f"[{trace_id}] Fusion: {len(vector_docs)} vec + {len(bm25_docs)} bm25 -> {len(fused_docs)} candidates")
+            # Merge & Deduplicate (Keep targeted docs first implicitly via ID check)
+            seen_ids = {d["id"] for d in final_candidates}
+            for d in global_docs:
+                if d["id"] not in seen_ids:
+                    final_candidates.append(d)
+                    seen_ids.add(d["id"])
+
+            # 3. Keyword Supplement (BM25) - Good for specific acronyms/names
+            bm25_docs = self._bm25_search(query_text, user_id, file_ids, k=n_results*2)
             
-            # 4. Re-ranking
+            # 4. Fusion (RRF)
+            # Fusing Targeted + Global + Keyword
+            fused_docs = hybrid_retriever.reciprocal_rank_fusion(final_candidates, bm25_docs)
+            logger.info(f"[{trace_id}] Fusion: {len(final_candidates)} vec + {len(bm25_docs)} bm25 -> {len(fused_docs)} candidates")
+            
+            # 5. Re-ranking
             final_docs = self._rerank_results(query_text, fused_docs, n_results)
             
-            # 5. Context Expansion (Parent-Child)
+            # 6. Context Expansion (Parent-Child)
             expanded_docs = self._expand_context(final_docs)
-            
-            duration = time.time() - start_time
-            logger.info(f"[{trace_id}] Query Complete in {duration:.3f}s. Returned {len(expanded_docs)} docs.")
             
             return expanded_docs
             
         except Exception as e:
             logger.error(f"[{trace_id}] Query Failed: {e}", exc_info=True)
-            # Metrics logged at the route level usually, but we could add granular metrics here
             return []
 
     def _analyze_importance(self, query: str) -> Optional[str]:
@@ -114,13 +133,16 @@ class RAGEngine:
         try:
             emb = embedding_model.encode([query]).tolist()
             
-            where_clause = {"user_id": user_id}
-            
-            # Note: ChromaDB 'where' clause is restrictive. 
-            # Complex filtering (OR logic for importance) might need post-filtering if not supported by simple 'where'.
-            # For now, if importance is set, strict filter.
+            # ChromaDB requires explicit $and for multiple conditions
             if importance:
-                where_clause["importance"] = importance
+                where_clause = {
+                    "$and": [
+                        {"user_id": user_id},
+                        {"importance": importance}
+                    ]
+                }
+            else:
+                where_clause = {"user_id": user_id}
             
             res = self.collection.query(
                 query_embeddings=emb,
@@ -144,8 +166,73 @@ class RAGEngine:
                     })
             return docs
             
+            return docs
+            
         except Exception as e:
             logger.error(f"Vector search error: {e}")
+            return []
+
+    def _map_intent_to_sections(self, intent: str) -> List[str]:
+        """Maps intents to the SECTION METADATA extracted by your PDF Parser."""
+        mapping = {
+            "FORMULA": ["Method", "Methodology", "Algorithm", "Model", "Appendix", "Implementation"],
+            "OVERVIEW": ["Abstract", "Introduction", "related work", "background"],
+            "METRICS": ["Experiment", "Results", "Discussion", "Evaluation", "Tables"],
+            "LIMITATIONS": ["Conclusion", "Discussion", "Limitation", "Future Work"],
+            "METHODOLOGY": ["Method", "Methodology", "Proposed Approach", "Architecture"]
+        }
+        return mapping.get(intent, [])
+
+    # Targeted Search Cache (separate prefix to avoid pollution)
+    @cache_manager.cached_operation(prefix="vector_target", ttl=3600)
+    def _vector_search_targeted(self, query: str, user_id: int, file_ids: Optional[List[int]], k: int, sections: List[str]) -> List[Dict]:
+        """Run Vector Search constrained to specific sections."""
+        try:
+            emb = embedding_model.encode([query]).tolist()
+            
+            # ChromaDB $or syntax for metadata fields can be tricky.
+            # We use $in operator if supported, or iterative query if needed.
+            # standard where: {"user_id": 1, "section": {"$in": sections}}
+            # BUT ChromaDB where clause is strict.
+            # Let's try simple $or at top level or iterative if simpler.
+            # Actually simplest is to just query and post-filter since we can't easily do AND(ID, OR(Section)) in old Chroma versions.
+            # Wait, we need "TARGETED" meaning we search ONLY there.
+            # Efficient implementation: Just filter in the where clause.
+            
+            # Construct where clause
+            # { "$and": [ {"user_id": uid}, {"section": {"$in": sections}} ] }
+            where_clause = {
+                "$and": [
+                    {"user_id": user_id},
+                    {"section": {"$in": sections}}
+                ]
+            }
+            
+            res = self.collection.query(
+                query_embeddings=emb,
+                n_results=k, # Fetch same K, but purely from target
+                where=where_clause
+            )
+            
+            docs = []
+            if res["documents"] and res["documents"][0]:
+                for i in range(len(res["documents"][0])):
+                    meta = res["metadatas"][0][i]
+                    if file_ids and meta.get("file_id") not in file_ids:
+                        continue
+                        
+                    docs.append({
+                        "content": res["documents"][0][i],
+                        "metadata": meta,
+                        "score": res["distances"][0][i] * 0.9, # Boost score (lower distance) logic handled in fusion?? 
+                        # actually lower distance = better. 
+                        # We just return them. RRF fusion (rank based) will be fine.
+                        "id": res["ids"][0][i]
+                    })
+            return docs
+            
+        except Exception as e:
+            logger.warning(f"Targeted search warning (fallback to global): {e}")
             return []
 
     # Short cache for BM25 as it's fast but good to avoid parsing if frequent

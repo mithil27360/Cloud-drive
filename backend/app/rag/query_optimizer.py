@@ -79,6 +79,34 @@ Current Query: {query}
         (Placeholder for future expansion - simply mirrors expand for now)
         """
         return self.expand_query(query)
+    
+    def classify_intent(self, query: str) -> str:
+        """
+        Maps user query to specific academic section targets.
+        """
+        q = query.lower()
+        
+        # 1. Formula / Math / Implementation
+        if any(w in q for w in ["formula", "equation", "math", "algorithm", "notation", "implementation", "code"]):
+            return "FORMULA"
+            
+        # 2. Main Idea / Overview / Goal
+        if any(w in q for w in ["main idea", "core idea", "summary", "abstract", "contribution", "goal", "purpose", "problem"]):
+            return "OVERVIEW"
+            
+        # 3. Metrics / Results / SOTA
+        if any(w in q for w in ["result", "performance", "score", "accuracy", "f1", "table", "graph", "benchmark", "sota"]):
+            return "METRICS"
+            
+        # 4. Limitations / Critique
+        if any(w in q for w in ["limitation", "drawback", "failure", "weakness", "critique", "gap"]):
+             return "LIMITATIONS"
+             
+        # 5. Methodology / Specifics
+        if any(w in q for w in ["how", "method", "approach", "architecture", "setup", "training"]):
+            return "METHODOLOGY"
+
+        return "GENERAL"
 
 # Singleton
 query_optimizer = QueryOptimizer()
