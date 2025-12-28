@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     
     # Groq API (LLM) - MUST be set via .env
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
     GROQ_TIMEOUT: int = 30
     
     # File Upload
@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSIONS: str = ".pdf,.txt,.md"
     
     # Rate Limiting
-    RATE_LIMIT_PER_MINUTE: int = 60
+    # Safe limit for Llama 3 8B (approx 30 RPM / 18k TPM)
+    RATE_LIMIT_PER_MINUTE: int = 30
     
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost"

@@ -23,13 +23,48 @@ class AdvancedPDFParser:
     def __init__(self):
         self.logger = logger
     
+    
     def extract_text_pymupdf(self, pdf_path: str) -> Tuple[str, Dict]:
         """
-        Extract text using PyMuPDF with layout preservation.
-        
-        Returns:
-            Tuple of (extracted_text, metadata)
+        Extract text using LlamaParse (if key exists) or PyMuPDF (fallback).
         """
+        import os
+        llama_key = os.getenv("LLAMA_CLOUD_API_KEY")
+        
+        # 1. Try LlamaParse for Research-Grade Math/Tables
+        if llama_key:
+            try:
+                self.logger.info("Attempting LlamaParse extraction...")
+                # Lazy import to avoid hard dependency if not used
+                from llama_parse import LlamaParse
+                
+                parser = LlamaParse(
+                    api_key=llama_key,
+                    result_type="markdown",  # Crucial for math ($E=mc^2$)
+                    verbose=True
+                )
+                
+                # Verify file exists before sending
+                if not os.path.exists(pdf_path):
+                    raise FileNotFoundError(f"File not found: {pdf_path}")
+                    
+                documents = parser.load_data(pdf_path)
+                
+                if documents:
+                    full_text = "\n\n".join([doc.text for doc in documents])
+                    metadata = {
+                        "title": "LlamaParse Document",
+                        "total_pages": len(documents),
+                        "source": "llama_parse"
+                    }
+                    self.logger.info(f"LlamaParse success: {len(full_text)} chars")
+                    return full_text, metadata
+                    
+            except Exception as e:
+                self.logger.error(f"LlamaParse failed: {e}. Falling back to PyMuPDF.")
+                # Fall through to PyMuPDF
+        
+        # 2. PyMuPDF Fallback (Existing Logic)
         try:
             doc = fitz.open(pdf_path)
             

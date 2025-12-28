@@ -50,7 +50,8 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             admin_user = models.User(
                 id=0,  # Special ID for admin
                 email=email,
-                is_active=True
+                is_active=True,
+                can_upload=True
             )
             return admin_user
         
@@ -73,7 +74,8 @@ def get_admin_user(token: str = Depends(oauth2_scheme)):
         admin_user = models.User(
             id=0,  # Special admin ID
             email=payload.get("sub", "admin"),
-            is_active=True
+            is_active=True,
+            can_upload=True
         )
         return admin_user
     except JWTError:
