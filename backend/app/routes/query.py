@@ -60,9 +60,34 @@ def query_documents(
 Your uploaded files: You can see your file list in the sidebar."""
             sources = []
         else:
-            # 2. Generate answer using LLM
+            # 2. Generate answer using LLM (Pass 1)
             t1 = time.time()
             answer = generate_response(request.query, results)
+            
+            # 3. Quick Faithfulness Check (Pass 2) - Internal auto-verify
+            # Only run if answer is substantial (not an error message)
+            if not answer.startswith("Error:") and len(answer) > 100:
+                try:
+                    from langchain_groq import ChatGroq
+                    import os
+                    api_key = os.getenv("GROQ_API_KEY")
+                    if api_key:
+                        verifier = ChatGroq(model="llama-3.1-8b-instant", api_key=api_key)
+                        context_text = " | ".join([res["content"][:200] for res in results[:3]])
+                        verify_prompt = f"""Quick check: Does this answer contain claims NOT in the context?
+Context (excerpt): {context_text[:500]}
+Answer: {answer[:500]}
+Reply with just: PASS or FAIL"""
+                        check = verifier.invoke(verify_prompt).content.strip().upper()
+                        if "FAIL" in check:
+                            # Regenerate with stricter prompt
+                            answer = generate_response(
+                                f"[STRICT MODE] Answer ONLY using the exact text. {request.query}", 
+                                results
+                            )
+                except Exception as e:
+                    pass  # Silent fail - don't block user
+            
             t_generation = time.time() - t1
             sources = results
             contexts = [res["content"] for res in results]

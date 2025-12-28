@@ -13,6 +13,14 @@ def query_documents(query_text: str, user_id: int, file_ids: Optional[List[int]]
     """
     logger.info(f"Querying: '{query_text}' for user {user_id}")
     
+    # 0. Importance-Aware Pre-Filter
+    # If query asks for core/main/primary, filter to core_contribution chunks
+    query_lower = query_text.lower()
+    importance_filter = None
+    if any(kw in query_lower for kw in ['main', 'core', 'primary', 'key contribution', 'summary', 'abstract']):
+        importance_filter = 'core_contribution'
+        logger.info(f"Importance filter activated: {importance_filter}")
+    
     # 1. Embed Query (for Vector Search)
     query_embedding = embedding_model.encode([query_text]).tolist()
     

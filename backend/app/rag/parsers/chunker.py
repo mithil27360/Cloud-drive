@@ -17,6 +17,43 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+def classify_importance(text: str, section_heading: str = "") -> str:
+    """
+    Classify chunk importance based on content and section heuristics.
+    
+    Returns: 'core_contribution', 'methodology', 'experiment', or 'background'
+    """
+    text_lower = text.lower()
+    heading_lower = section_heading.lower() if section_heading else ""
+    
+    # Core Contribution: Abstract, Conclusion, Main findings
+    core_keywords = ['abstract', 'conclusion', 'summary', 'key finding', 'contribution', 
+                     'main result', 'we propose', 'we present', 'novel', 'state-of-the-art']
+    if any(kw in heading_lower for kw in ['abstract', 'conclusion', 'summary']):
+        return 'core_contribution'
+    if any(kw in text_lower[:500] for kw in core_keywords):
+        return 'core_contribution'
+    
+    # Methodology: Methods, Approach, Algorithm
+    method_keywords = ['method', 'approach', 'algorithm', 'implementation', 'architecture',
+                       'procedure', 'technique', 'design', 'model']
+    if any(kw in heading_lower for kw in ['method', 'approach', 'algorithm']):
+        return 'methodology'
+    if any(kw in text_lower for kw in method_keywords):
+        return 'methodology'
+    
+    # Experiment: Results, Evaluation, Data
+    exp_keywords = ['experiment', 'result', 'evaluation', 'dataset', 'benchmark', 
+                    'accuracy', 'performance', 'table', 'figure', 'ablation']
+    if any(kw in heading_lower for kw in ['result', 'experiment', 'evaluation']):
+        return 'experiment'
+    if any(kw in text_lower for kw in exp_keywords):
+        return 'experiment'
+    
+    # Default: Background
+    return 'background'
+
+
 class SemanticChunker:
     """
     Production-grade Semantic Chunking.
@@ -241,14 +278,18 @@ class ParentChildChunker:
             children_texts = self.child_splitter.split_text(parent_text)
             
             for c_idx, child_text in enumerate(children_texts):
-                # 3. Link Child to Parent
+                # 3. Link Child to Parent + Classify Importance
+                section = parent_meta.get("section_heading", "")
+                importance = classify_importance(child_text, section)
+                
                 child_meta = parent_meta.copy()
                 child_meta.update({
                     "parent_content": parent_text,  # The "Big" chunk
                     "is_child": True,
                     "parent_index": p_idx,
                     "child_index": c_idx,
-                    "chunk_method": "parent_child"
+                    "chunk_method": "parent_child",
+                    "importance": importance  # NEW: core_contribution/methodology/experiment/background
                 })
                 
                 all_children.append({
