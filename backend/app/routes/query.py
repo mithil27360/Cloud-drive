@@ -123,32 +123,34 @@ def evaluate_response(req: EvaluateRequest):
         
         # 3. Optimized Audit: Generate Score AND Explanation in one pass (Latency < 3s)
         audit_prompt = f"""
-        You are a strict RAG Outcome Auditor.
-        Task: Verify if the ANSWER is supported by the CONTEXTS.
-        
-        CONTEXTS:
-        {req.contexts}
-        
-        ANSWER:
-        {req.answer}
-        
-        CRITICAL INSTRUCTIONS (Follow these steps mentally):
-        1. **Check "Negative Claims"**: If the Answer says "The text does not provide details about X", LOOK at the Contexts. IF the Contexts DO have a table/list about X, the Answer is LYING (Hallucination).
-        2. **Check "False Accusations"**: Before saying "The Answer failed to mention Y", SEARCH the Answer for "Y". If it's there, do NOT penalize.
-        3. **Check Logic**: Verify technical details (e.g., Inputs vs Outputs). mistaking an Output for an Input is a Hallucination.
-        
-        SCORING RUBRIC:
-        - **1.0**: Perfect.
-        - **0.8**: Mostly correct, minor missed nuance.
-        - **0.5**: Notable error (e.g., claiming data is missing when it's there).
-        - **0.0**: Complete hallucination.
+You are a critical RAG Auditor. Your job is to find flaws, not excuse them.
 
-        FORMAT YOUR RESPONSE AS VALID JSON:
-        {{
-            "score": <float>,
-            "explanation": "<string concise_reasoning>"
-        }}
-        """
+CONTEXTS:
+{req.contexts}
+
+ANSWER:
+{req.answer}
+
+INSTRUCTIONS (Follow Step-by-Step):
+1. **Find at least ONE flaw**. Look for:
+   - Claims not in context (hallucination)
+   - Stating "not provided" when context HAS the info (negative hallucination)
+   - Technical errors (e.g., Input vs Output confusion)
+   - Overly vague summaries that add no value
+2. **If truly perfect (rare)**, explain why every claim is verified.
+3. **Score conservatively**:
+   - 0.9-1.0: Exceptional. Every claim verified, no flaws.
+   - 0.7-0.8: Good. Minor omissions or rewording, but accurate.
+   - 0.5-0.6: Acceptable. Some unverified claims or vagueness.
+   - <0.5: Poor. Significant errors or hallucinations.
+
+FORMAT AS JSON:
+{{
+    "flaws_found": ["<flaw1>", "<flaw2>"],
+    "score": <float>,
+    "explanation": "<brief reasoning>"
+}}
+"""
         
         # Invoke LLM
         response = llm.invoke(audit_prompt).content
@@ -166,16 +168,24 @@ def evaluate_response(req: EvaluateRequest):
                 data = json.loads(response)
                 
             score = data.get("score", 0.0)
+            flaws = data.get("flaws_found", [])
             explanation = data.get("explanation", "Could not parse explanation.")
+            
+            # Build comprehensive note
+            if flaws:
+                flaws_text = "Flaws Found: " + "; ".join(flaws) + ". "
+            else:
+                flaws_text = ""
+            full_explanation = flaws_text + explanation
             
         except Exception as e:
             print(f"Audit Parse Error: {e} | Response: {response}")
             score = 0.5
-            explanation = "Error parsing auditor response. Please try again."
+            full_explanation = "Error parsing auditor response. Please try again."
 
         return {
             "faithfulness": score,
-            "explanation": explanation
+            "explanation": full_explanation
         }
         
     except Exception as e:
