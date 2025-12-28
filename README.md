@@ -158,7 +158,7 @@ curl localhost:8000/health
 
 ---
 
-**Scope & Intent**
+## Scope & Intent
 
 *   This project intentionally focuses on correctness, validation, and observability in RAG systems.
 *   It does not attempt to optimize for large scale distributed deployment or regulated production use cases.
