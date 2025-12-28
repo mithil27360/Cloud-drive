@@ -116,6 +116,8 @@ async function loadAllData() {
         chatsData = Array.isArray(chats) ? chats : [];
         const logsData = Array.isArray(logs) ? logs : [];
 
+        console.log('Loaded data:', { users: usersData.length, files: filesData.length, chats: chatsData.length });
+
         updateKPIs();
         renderUsersTable(usersData);
         renderFilesTable(filesData);
@@ -182,7 +184,8 @@ function renderUsersTable(users) {
                 <td>
                     <div style="display: flex; gap: 4px; flex-wrap: wrap;">
                         <button class="btn btn-small" onclick="showUserProfile(${user.id})" title="Profile">👤</button>
-                        <button class="btn btn-small" onclick="showUserChats('${escapeHtml(user.email)}')" title="Chats">💬</button>
+                        <button class="btn btn-small" onclick="showUserFiles(${user.id}, '${escapeHtml(user.email)}')" title="Files">📁</button>
+                        <button class="btn btn-small" onclick="showUserChats(${user.id}, '${escapeHtml(user.email)}')" title="Chats">💬</button>
                         
                         ${!user.is_verified ?
                 `<button class="btn btn-small" onclick="verifyUser(${user.id})" title="Verify" style="color: var(--success);">✅</button>` : ''}
@@ -281,10 +284,15 @@ function filterUsers() {
 
 function showUserProfile(userId) {
     const user = usersData.find(u => u.id === userId);
-    if (!user) return;
+    if (!user) {
+        showToast('User not found', true);
+        return;
+    }
 
     const userFiles = filesData.filter(f => f.owner_email === user.email);
-    const userChats = chatsData.filter(c => c.user_email === user.email);
+    const userChats = chatsData.filter(c => String(c.user_id) === String(userId) || c.user_email === user.email);
+
+    console.log(`Profile for user ${userId}:`, { user, userChats: userChats.length });
 
     const created = new Date(user.created_at);
     const accountAge = Math.floor((new Date() - created) / (1000 * 60 * 60 * 24));
@@ -362,7 +370,7 @@ function showUserProfile(userId) {
                     </div>
                 `).join('')}
                 ${userChats.length > 3 ? `<div style="text-align: center; margin-top: 8px;">
-                    <button class="btn btn-small" onclick="closeProfileModal(); showUserChats('${escapeHtml(user.email)}')">View All ${userChats.length} Queries</button>
+                    <button class="btn btn-small" onclick="closeProfileModal(); showUserChats(${userId}, '${escapeHtml(user.email)}')">View All ${userChats.length} Queries</button>
                 </div>` : ''}
             </div>
         </div>
@@ -376,33 +384,98 @@ function closeProfileModal() {
     document.getElementById('profileModal').style.display = 'none';
 }
 
-function showUserChats(userEmail) {
-    const userChats = chatsData.filter(chat => chat.user_email === userEmail);
+/**
+ * Show all chats for a specific user
+ * @param {number} userId - The user ID
+ * @param {string} userEmail - The user's email address
+ */
+function showUserChats(userId, userEmail) {
+    console.log(`showUserChats called with userId=${userId}, userEmail=${userEmail}`);
+    console.log(`Total chats in data: ${chatsData.length}`);
+
+    // Filter chats by userId OR userEmail for maximum compatibility
+    const userChats = chatsData.filter(chat => {
+        const matchesId = String(chat.user_id) === String(userId);
+        const matchesEmail = chat.user_email === userEmail;
+        return matchesId || matchesEmail;
+    });
+
+    console.log(`Filtered ${userChats.length} chats for user`);
+
     const modal = document.getElementById('chatModal');
     const title = document.getElementById('chatModalTitle');
     const content = document.getElementById('chatModalContent');
+
+    if (!modal || !title || !content) {
+        console.error('Chat modal elements not found');
+        showToast('Error: Modal elements not found', true);
+        return;
+    }
 
     title.textContent = `Chats for ${userEmail}`;
 
     if (userChats.length === 0) {
         content.innerHTML = '<div class="empty-state">No chat history for this user</div>';
     } else {
-        content.innerHTML = userChats.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).map(chat => `
+        // Sort by timestamp descending (newest first)
+        const sortedChats = userChats.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+        content.innerHTML = sortedChats.map(chat => `
             <div class="chat-message">
-                <div class="chat-query">${escapeHtml(chat.query)}</div>
-                <div class="chat-answer">${escapeHtml(chat.answer)}</div>
-                <div class="chat-time">${new Date(chat.timestamp).toLocaleString()}</div>
+                <div class="chat-query">${escapeHtml(chat.query || 'No query text')}</div>
+                <div class="chat-answer">${escapeHtml(chat.answer || 'No answer text')}</div>
+                <div class="chat-time">${chat.timestamp ? new Date(chat.timestamp).toLocaleString() : 'No timestamp'}</div>
             </div>
         `).join('');
     }
 
     modal.style.display = 'flex';
+    console.log('Chat modal displayed');
+}
+
+/**
+ * Show all files for a specific user
+ * @param {number} userId - The user ID
+ * @param {string} userEmail - The user's email address
+ */
+function showUserFiles(userId, userEmail) {
+    console.log(`showUserFiles called with userId=${userId}, userEmail=${userEmail}`);
+
+    // 1. Get Elements
+    const searchInput = document.getElementById('searchFiles');
+    const filesTable = document.getElementById('filesTable');
+
+    if (searchInput) {
+        // 2. Set search value and focus
+        searchInput.value = userEmail;
+        searchInput.focus();
+
+        // 3. Trigger filter logic
+        filterFiles();
+
+        // 4. Scroll to files section
+        // Find the closest card container or just scroll to table
+        const filesSection = filesTable ? filesTable.closest('.table-card') : null;
+        if (filesSection) {
+            filesSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // 5. Notify user
+        showToast(`Showing files for ${userEmail}`);
+    } else {
+        console.error('Search input not found');
+        showToast('Error: File search input not found', true);
+    }
 }
 
 function closeChatModal() {
-    document.getElementById('chatModal').style.display = 'none';
+    const modal = document.getElementById('chatModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
 }
 
+// Close modals when clicking outside
 window.onclick = function (event) {
     const chatModal = document.getElementById('chatModal');
     const profileModal = document.getElementById('profileModal');

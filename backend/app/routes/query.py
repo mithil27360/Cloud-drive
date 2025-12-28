@@ -2,9 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
+import datetime
+import logging
 from .. import database, models, auth
 from ..rag import engine
 from ..rag.llm import generate_response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api",
@@ -40,10 +44,26 @@ def query_documents(
     import time
     import re
     import uuid
+    from ..rag.conversational_handler import conversational_handler
+    
     start_time = time.time()
     trace_id = str(uuid.uuid4())
     
     try:
+        # 0. Check if query is conversational (greetings, help, etc.)
+        if conversational_handler.is_conversational(request.query):
+            conversational_response = conversational_handler.get_response(request.query)
+            if conversational_response:
+                # Return direct response without retrieval
+                latency = (time.time() - start_time) * 1000  # Convert to ms
+                return QueryResponse(
+                    answer=conversational_response,
+                    citations=[],
+                    contexts=[],
+                    trace_id=trace_id,
+                    latency_ms=latency
+                )
+        
         # 1. Retrieve relevant chunks
         t0 = time.time()
         results = engine.query_documents(
@@ -107,6 +127,20 @@ def query_documents(
         from ..rag.metrics import metrics
         unsupported = 1 if "not stated" in answer.lower() else 0
         metrics.log_query(total_time, success=bool(results), unsupported_claims=unsupported)
+        
+        # **SAVE CHAT TO DATABASE**
+        try:
+            chat_entry = models.ChatHistory(
+                user_id=current_user.id,
+                query=request.query,
+                answer=answer,
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            )
+            db.add(chat_entry)
+            db.commit()
+        except Exception as log_err:
+            logger.error(f"Failed to log chat: {log_err}")
+            # Don't fail the entire request if logging fails
         
         return {
             "answer": answer,

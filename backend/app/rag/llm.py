@@ -5,34 +5,34 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# RESEARCH-GRADE SYSTEM PROMPT (ASSERTIVE MODE)
-SYSTEM_PROMPT = """You are a research assistant for a PhD student or senior engineer. Your role is to provide direct, specific, and actionable answers.
+# NEUTRAL SYSTEM PROMPT - NO FORCED FORMATTING
+SYSTEM_PROMPT = """You are a helpful study assistant. Answer questions using the provided context.
 
-### CRITICAL RULES:
+### RULES:
 
-1.  **Zero Evasion**: Never say "not explicitly stated" or "not mentioned" if the information IS in the context. You must extract it.
-2.  **Directness**: Start with the answer immediately. No preambles like "Based on the context..." or "The paper discusses...".
-3.  **Specificity**: Include numbers, metrics, BLEU scores, dataset names, and concrete details whenever present.
-4.  **Citation**: Every factual claim MUST be followed by `[Source ID]` in the format `[file_id:chunk_index]`.
-5.  **Smart Inference (Use Sparingly)**:
-    - Use "Interpreting [vague term] as [specific concept]..." ONLY when the query is genuinely ambiguous (e.g., "formula core" → "Scaled Dot-Product Attention").
-    - DO NOT use it for clear questions. If the user asks "what is the problem", and the Introduction states the problem, just answer it directly.
-6.  **Summarization Structure**:
-    - Problem: State the specific challenge addressed.
-    - Method: Describe the approach (architecture, key components).
-    - Key Result: Report exact metrics (e.g., "BLEU 28.4 on WMT 2014 EN-DE").
-    - Implications: Explain why this matters (scalability, foundation for future work, etc.).
-7.  **Formulas**: When asked for formulas, provide the LaTeX or plain-text representation clearly. Do NOT confuse conceptual descriptions with mathematical formulas.
-
-### TONE:
-Write like a research TA grading a paper: confident, precise, and intolerant of vagueness.
+1. **Answer naturally**: Respond in the most appropriate format for the question and content.
+2. **Be direct**: Start with the answer, not preambles.
+3. **Cite sources**: When referencing specific information, mention the page if available.
+4. **No invention**: Only use information from the provided context.
+5. **Match the content**: 
+   - For exam questions/PYQs: List the questions and answers directly
+   - For lecture notes: Explain the concepts clearly
+   - For any document: Summarize the key points naturally
 
 ### CONTEXT FORMAT:
-[Source ID: file_id:chunk_index] (Section: Method) Content...
+[Source: Section, p. X]
+Content here...
+
+### DO NOT:
+- Force a "Problem/Method/Results" structure on non-research documents
+- Treat exam papers or PYQs as research papers
+- Add unnecessary academic formatting
+
+Just answer naturally and helpfully.
 """
 
 def _format_context(chunks: List[Dict]) -> str:
-    """Format chunks into well-structured context with atomic IDs and sections."""
+    """Format chunks with page metadata for LLM to cite."""
     if not chunks:
         return "No relevant context found."
     
@@ -41,25 +41,38 @@ def _format_context(chunks: List[Dict]) -> str:
         metadata = chunk.get("metadata", {})
         content = chunk.get("content", "")
         
-        # Use existing stable ID logic
-        fid = metadata.get("file_id", "0")
-        cid = metadata.get("sub_chunk_index", metadata.get("chunk_index", idx))
-        source_id = f"{fid}:{cid}"
+        # Extract page information from metadata
+        page_start = metadata.get("page_start", metadata.get("page", 1))
+        page_end = metadata.get("page_end", page_start)
+        section = metadata.get("section", "General")
         
-        # Add SECTION info to context so LLM knows where it came from
-        section = metadata.get("section", "General") 
+        # Format page range
+        if page_start == page_end:
+            page_info = f"p. {page_start}"
+        else:
+            page_info = f"pp. {page_start}-{page_end}"
         
-        header = f"[Source ID: {source_id}] (Section: {section})"
+        # Build header with page info
+        header = f"[Source: {section}, {page_info}]"
         context_parts.append(f"{header}\n{content}\n")
     
     return "\n---\n".join(context_parts)
 
-def generate_response(query: str, context_chunks: List[Dict]) -> str:
+def generate_response(query: str, context_chunks: List[Dict], filename: str = "document.pdf") -> str:
     """
     Generate high-quality response using Groq API.
     
-    Uses production-grade prompt engineering for better answers.
+    Uses 7-layer production pipeline:
+    1. Document Type Detection
+    2. Intent Routing
+    3. Domain Rules
+    4. Context Quality Check
+    5. Answer Self-Validation
+    6. Style Adapter
+    7. Failure Logging
     """
+    from .production_pipeline import run_pipeline, post_validate, log_failure
+    
     # Format context with structure
     context = _format_context(context_chunks)
     
@@ -68,11 +81,18 @@ def generate_response(query: str, context_chunks: List[Dict]) -> str:
     if len(context) > MAX_CONTEXT_LENGTH:
         context = context[:MAX_CONTEXT_LENGTH] + "\n\n[Context truncated due to length...]"
     
-    # Build messages with production prompt
+    # Run 7-layer pipeline (Layers 1-4, 6)
+    pipeline_result = run_pipeline(query, filename, context_chunks)
+    logger.info(f"Pipeline: doc={pipeline_result.document_type.value}, intent={pipeline_result.intent.value}")
+    
+    if pipeline_result.issues:
+        logger.warning(f"Pipeline issues: {pipeline_result.issues}")
+    
+    # Build messages with pipeline-generated prompt
     messages = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT
+            "content": pipeline_result.system_prompt
         },
         {
             "role": "user",
@@ -81,7 +101,7 @@ def generate_response(query: str, context_chunks: List[Dict]) -> str:
 
 Question: {query}
 
-Please provide a comprehensive answer based on the context above. If the context contains relevant information, explain it clearly and cite specific sources using only the [Source ID] format."""
+Answer based on the context above. Be direct and match the document style."""
         }
     ]
     
@@ -105,7 +125,16 @@ Please provide a comprehensive answer based on the context above. If the context
         result = response.json()
         
         if "choices" in result and len(result["choices"]) > 0:
-            return result["choices"][0]["message"]["content"]
+            answer = result["choices"][0]["message"]["content"]
+            
+            # Layer 5: Post-validation
+            is_valid, issues = post_validate(answer, query, pipeline_result, context)
+            if not is_valid:
+                logger.warning(f"Answer validation failed: {issues}")
+                # Don't regenerate for now, just log
+                # Future: could retry with stricter prompt
+            
+            return answer
         else:
             return "No response generated."
             
