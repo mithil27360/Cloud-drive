@@ -9,166 +9,256 @@ Implements intelligent text splitting that:
 """
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer, util
 from typing import List, Dict, Optional
 import logging
+import re
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
-
 class SemanticChunker:
-    """Production-grade semantic chunking with metadata enrichment."""
+    """
+    Production-grade Semantic Chunking.
+    
+    Splits text based on semantic similarity between sentences rather than 
+    arbitrary character counts. Finds "natural breaks" in conversation/text.
+    """
     
     def __init__(
         self,
-        chunk_size: int = 1024,
-        chunk_overlap: int = 200,
-        separators: Optional[List[str]] = None
+        model_name: str = 'all-MiniLM-L6-v2',
+        breakpoint_percentile_threshold: int = 95,
+        buffer_size: int = 1
     ):
         """
-        Initialize semantic chunker.
-        
         Args:
-            chunk_size: Target size of each chunk in characters
-            chunk_overlap: Number of characters to overlap between chunks
-            separators: Custom separators (default: paragraph, sentence, word)
+            model_name: Embedding model for semantic comparison
+            breakpoint_percentile_threshold: Higher = fewer chunks (more strict splitting)
+            buffer_size: Number of sentences to look ahead/behind for context
         """
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        
-        # Default separators: preserve semantic boundaries
-        self.separators = separators or [
-            "\n\n",  # Paragraphs
-            "\n",    # Lines
-            ". ",    # Sentences
-            "! ",    # Sentences
-            "? ",    # Sentences
-            "; ",    # Clauses
-            ", ",    # Phrases
-            " ",     # Words
-            ""       # Characters (fallback)
-        ]
-        
-        # Initialize LangChain splitter
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            separators=self.separators,
-            length_function=len,
-            is_separator_regex=False
-        )
-        
-        self.logger = logger
-    
-    def chunk_text(
-        self,
-        text: str,
-        metadata: Optional[Dict] = None
-    ) -> List[Dict]:
-        """
-        Chunk text with semantic awareness and metadata enrichment.
-        
-        Args:
-            text: Full document text
-            metadata: Optional base metadata to include
+        try:
+            self.model = SentenceTransformer(model_name)
+        except Exception as e:
+            logger.error(f"Failed to load embedding model: {e}")
+            self.model = None
             
-        Returns:
-            List of chunks with enriched metadata
+        self.breakpoint_percentile_threshold = breakpoint_percentile_threshold
+        self.buffer_size = buffer_size
+        self.logger = logger
+        
+        # Fallback splitter
+        self.fallback_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=200
+        )
+
+    def _split_into_sentences(self, text: str) -> List[str]:
+        # Simple robust sentence splitting
+        # Look for periods, question marks, exclamations followed by space and capital letter
+        sentences = re.split(r'(?<=[.?!])\s+(?=[A-Z])', text)
+        return [s.strip() for s in sentences if s.strip()]
+
+    def _combine_sentences(self, sentences: List[dict], buffer_size: int = 1) -> List[dict]:
+        # Add window context to sentences for better embedding representation
+        for i in range(len(sentences)):
+            combined_text = ""
+            # Add previous sentences
+            for j in range(i - buffer_size, i):
+                if j >= 0:
+                    combined_text += sentences[j]['sentence'] + " "
+            
+            combined_text += sentences[i]['sentence']
+            
+            # Add next sentences
+            for j in range(i + 1, i + 1 + buffer_size):
+                if j < len(sentences):
+                    combined_text += " " + sentences[j]['sentence']
+            
+            sentences[i]['combined_sentence'] = combined_text
+        return sentences
+
+    def chunk_text(self, text: str, metadata: Optional[Dict] = None) -> List[Dict]:
+        """
+        Chunk using semantic analysis.
+        
+        1. Split into sentences
+        2. Embed sentences (with context buffer)
+        3. Calculate cosine distances between adjacent sentences
+        4. Split where distance is high (similarity is low)
         """
         if not text or not text.strip():
-            self.logger.warning("Empty text provided for chunking")
             return []
+            
+        # 0. Handle Page Markers (Recursive Strategy)
+        # pdf_parser inserts "\n--- Page X ---\n". We use this to assign page numbers.
+        page_pattern = r'\n--- Page (\d+) ---\n'
+        # Check if text contains page markers
+        if re.search(page_pattern, text):
+            parts = re.split(page_pattern, text)
+            # parts structure: [preamble, page_num_1, content_1, page_num_2, content_2, ...]
+            
+            all_chunks = []
+            
+            # Handle preamble (text before first page marker)
+            if parts[0].strip():
+                # Treat as Page 1 or metadata default
+                # We'll just recurse with existing metadata
+                all_chunks.extend(self.chunk_text(parts[0], metadata))
+                
+            # Iterate over page number/content pairs
+            for i in range(1, len(parts), 2):
+                try:
+                    page_num = int(parts[i])
+                    page_content = parts[i+1]
+                    
+                    if not page_content.strip():
+                        continue
+                        
+                    # Update metadata for this page
+                    page_metadata = (metadata or {}).copy()
+                    page_metadata["page_number"] = page_num
+                    
+                    # Recurse: Chunk this page's content
+                    # Since markers are removed, the recursive call will hit the core logic below
+                    page_chunks = self.chunk_text(page_content, page_metadata)
+                    all_chunks.extend(page_chunks)
+                except Exception as e:
+                    logger.warning(f"Error processing page split: {e}")
+                    continue
+                    
+            return all_chunks
+
+        # Fallback if model failed to load
+        if not self.model:
+            logger.warning("Semantic chunking model not loaded, using fallback.")
+            chunks = self.fallback_splitter.split_text(text)
+            return [{"content": c, "metadata": metadata or {}} for c in chunks]
+
+        # 1. Split sentences
+        single_sentences_list = self._split_into_sentences(text)
+        if len(single_sentences_list) < 2:
+             return [{"content": text, "metadata": metadata or {}}]
+             
+        sentences = [{'sentence': x, 'index': i} for i, x in enumerate(single_sentences_list)]
         
-        try:
-            # Split text using semantic boundaries
-            chunks = self.splitter.split_text(text)
+        # 2. Add Context Buffer & Embed
+        sentences = self._combine_sentences(sentences, self.buffer_size)
+        embeddings = self.model.encode([x['combined_sentence'] for x in sentences])
+        
+        # 3. Calculate Cosine Distances
+        distances = []
+        for i in range(len(embeddings) - 1):
+            sim = util.pytorch_cos_sim(embeddings[i], embeddings[i+1]).item()
+            distance = 1 - sim
+            distances.append(distance)
             
-            total_chunks = len(chunks)
-            self.logger.info(f"Created {total_chunks} semantic chunks from {len(text)} characters")
+        # 4. Determine Threshold
+        # value at the Xth percentile (e.g. 95th percentile of distances = top 5% most different)
+        # Any distance higher than this is a breakpoint.
+        if not distances:
+            breakpoint_distance_threshold = 0
+        else:
+            breakpoint_distance_threshold = np.percentile(distances, self.breakpoint_percentile_threshold)
             
-            # Enrich chunks with metadata
-            enriched_chunks = []
+        # 5. Group Chunks
+        indices_above_thresh = [i for i, x in enumerate(distances) if x > breakpoint_distance_threshold]
+        
+        chunks = []
+        start_index = 0
+        
+        # Iterate through breakpoints
+        for index in indices_above_thresh:
+            # The split happens AFTER the sentence at 'index'
+            end_index = index + 1 # exclusive because list slicing is exclusive
             
-            for idx, chunk_text in enumerate(chunks):
-                chunk_metadata = {
-                    "chunk_index": idx,
-                    "total_chunks": total_chunks,
-                    "chunk_size": len(chunk_text),
-                    "position_ratio": round(idx / total_chunks, 3) if total_chunks > 0 else 0
-                }
-                
-                # Add base metadata if provided
-                if metadata:
-                    chunk_metadata.update(metadata)
-                
-                # Determine chunk position description
-                if idx == 0:
-                    chunk_metadata["position"] = "beginning"
-                elif idx == total_chunks - 1:
-                    chunk_metadata["position"] = "end"
-                else:
-                    chunk_metadata["position"] = "middle"
-                
-                enriched_chunks.append({
-                    "content": chunk_text.strip(),
-                    "metadata": chunk_metadata
-                })
+            group = sentences[start_index:end_index]
+            combined_text = " ".join([d['sentence'] for d in group])
+            chunks.append(combined_text)
+            start_index = end_index
             
-            return enriched_chunks
+        # Add the last chunk
+        if start_index < len(sentences):
+            group = sentences[start_index:]
+            combined_text = " ".join([d['sentence'] for d in group])
+            chunks.append(combined_text)
             
-        except Exception as e:
-            self.logger.error(f"Chunking failed: {str(e)}")
-            raise
+        # Format for return
+        enriched_chunks = []
+        total_chunks = len(chunks)
+        
+        for idx, chunk_text in enumerate(chunks):
+            chunk_metadata = {
+                "chunk_index": idx,
+                "total_chunks": total_chunks,
+                "chunk_method": "semantic",
+                **(metadata or {})
+            }
+            enriched_chunks.append({
+                "content": chunk_text,
+                "metadata": chunk_metadata
+            })
+            
+        logger.info(f"Semantic Chunking: {len(text)} chars -> {len(single_sentences_list)} sentences -> {total_chunks} chunks")
+        return enriched_chunks
+
+# ... (SemanticChunker class remains above)
+
+class ParentChildChunker:
+    """
+    Implements 'Small-to-Big' Retrieval Strategy.
     
-    def chunk_with_headings(
-        self,
-        text: str,
-        metadata: Optional[Dict] = None
-    ) -> List[Dict]:
-        """
-        Advanced chunking that tries to preserve section headings.
+    1. Splits text into large 'Parent' chunks (e.g., 1024-2048 chars) for full context.
+    2. Splits each Parent into small 'Child' chunks (e.g., 256-512 chars) for precise retrieval.
+    3. Child chunks store the Parent's content in metadata.
+    """
+    
+    def __init__(self, parent_chunk_size=1024, child_chunk_size=256, chunk_overlap=0):
+        self.parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=parent_chunk_size, 
+            chunk_overlap=chunk_overlap
+        )
+        self.child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=child_chunk_size, 
+            chunk_overlap=chunk_overlap
+        )
+        self.semantic_chunker = SemanticChunker() # Use semantic for finding good parents?
         
-        This is useful for structured documents with clear sections.
-        """
-        # Simple heading detection (can be enhanced)
-        lines = text.split('\n')
-        sections = []
-        current_section = {"heading": "", "content": []}
-        
-        for line in lines:
-            # Simple heuristic: short lines (< 60 chars) followed by newline might be headings
-            if len(line.strip()) < 60 and line.strip() and not line.strip().endswith('.'):
-                # Might be a heading
-                if current_section["content"]:
-                    sections.append(current_section)
-                current_section = {
-                    "heading": line.strip(),
-                    "content": []
-                }
-            else:
-                current_section["content"].append(line)
-        
-        # Add last section
-        if current_section["content"]:
-            sections.append(current_section)
-        
-        # Now chunk each section
-        all_chunks = []
-        
-        for section in sections:
-            section_text = "\n".join(section["content"])
-            section_metadata = metadata.copy() if metadata else {}
+    def chunk_text(self, text: str, metadata: Optional[Dict] = None) -> List[Dict]:
+        if not text or not text.strip():
+            return []
             
-            if section["heading"]:
-                section_metadata["section_heading"] = section["heading"]
-            
-            section_chunks = self.chunk_text(section_text, section_metadata)
-            all_chunks.extend(section_chunks)
+        # 1. Create Parent Chunks (Legacy: fixed size, Future: Semantic Parents)
+        # Using Semantic Chunker for Parents ensures parents are topic-coherent
+        parents = self.semantic_chunker.chunk_text(text, metadata)
         
-        return all_chunks
+        all_children = []
+        
+        for p_idx, parent in enumerate(parents):
+            parent_text = parent["content"]
+            parent_meta = parent["metadata"]
+            
+            # 2. Create Child Chunks from this Parent
+            children_texts = self.child_splitter.split_text(parent_text)
+            
+            for c_idx, child_text in enumerate(children_texts):
+                # 3. Link Child to Parent
+                child_meta = parent_meta.copy()
+                child_meta.update({
+                    "parent_content": parent_text,  # The "Big" chunk
+                    "is_child": True,
+                    "parent_index": p_idx,
+                    "child_index": c_idx,
+                    "chunk_method": "parent_child"
+                })
+                
+                all_children.append({
+                    "content": child_text, # The "Small" chunk (for vector search)
+                    "metadata": child_meta
+                })
+        
+        logger.info(f"Parent-Child Chunking: {len(parents)} parents -> {len(all_children)} children")
+        return all_children
 
-
-# Singleton instance
-semantic_chunker = SemanticChunker(
-    chunk_size=1024,  # Good balance for most embedding models
-    chunk_overlap=200  # 20% overlap for context preservation
-)
+# Singleton instance (switched to Parent-Child as default for Research-Grade)
+# You can swap this back to semantic_chunker if desired
+semantic_chunker = ParentChildChunker()

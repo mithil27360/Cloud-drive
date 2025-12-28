@@ -1,6 +1,6 @@
 # AI Cloud Drive
 
-Self-hosted file storage with RAG search. Upload docs, ask questions, get answers from your files.
+Self hosted file storage with RAG search. Upload docs, ask questions, get answers from your files.
 
 ## What it does
 

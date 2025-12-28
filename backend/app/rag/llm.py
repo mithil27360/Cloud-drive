@@ -10,17 +10,16 @@ SYSTEM_PROMPT = """You are an expert AI research assistant helping users underst
 
 Your responsibilities:
 1. Provide accurate, comprehensive answers based ONLY on the provided context
-2. Cite specific sections when making claims
-3. If the context doesn't contain enough information, clearly state this
-4. Use clear, professional language
-5. Organize complex information into structured responses
+2. Cite specific sections using the format [Source ID] (e.g., [Source 1])
+3. Use the page numbers provided in the context for specific claims
+4. If the context doesn't contain enough information, clearly state this
+5. Use clear, professional language
 
 Guidelines:
-- Be precise and factual
+- EVERY factual claim must be backed by a citation [Source ID]
+- Do not cite page numbers directly (e.g. "on page 5"), use the Source ID
 - Use bullet points for clarity when appropriate
 - Quote relevant passages when helpful
-- Acknowledge limitations in the available information
-- If asked tocompare or analyze, provide balanced insights
 """
 
 def _format_context(chunks: List[Dict]) -> str:
@@ -35,10 +34,10 @@ def _format_context(chunks: List[Dict]) -> str:
         
         # Add metadata if available
         meta_info = []
-        if "section_heading" in metadata:
+        if "page_number" in metadata:
+            meta_info.append(f"Page {metadata['page_number']}")
+        elif "section_heading" in metadata:
             meta_info.append(f"Section: {metadata['section_heading']}")
-        if "position" in metadata:
-            meta_info.append(f"Position: {metadata['position']}")
         
         meta_str = f" ({', '.join(meta_info)})" if meta_info else ""
         
@@ -73,7 +72,7 @@ def generate_response(query: str, context_chunks: List[Dict]) -> str:
 
 Question: {query}
 
-Please provide a comprehensive answer based on the context above. If the context contains relevant information, explain it clearly and cite specific sources. If the information is incomplete or missing, state this explicitly."""
+Please provide a comprehensive answer based on the context above. If the context contains relevant information, explain it clearly and cite specific sources using only the [Source ID] format."""
         }
     ]
     
