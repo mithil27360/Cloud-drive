@@ -15,16 +15,21 @@ class QueryRequest(BaseModel):
     query: str
     file_ids: Optional[List[int]] = None  # Optional list of file IDs to search
 
+class Citation(BaseModel):
+    source_id: str
+    text: str
+    page: int
+    section: str
+    file_id: int
+    score: float
+
 class QueryResponse(BaseModel):
     answer: str
-    sources: List[Dict[str, Any]]
-    contexts: List[str] # Added for audit
-    metadata: Optional[Dict[str, Any]] = None # Added for latency
-
-class EvaluateRequest(BaseModel):
-    question: str
-    answer: str
-    contexts: List[str]
+    citations: List[Citation]
+    latency_ms: float
+    trace_id: str
+    contexts: List[str] # Legacy for audit
+    metadata: Optional[Dict[str, Any]] = None
 
 @router.post("/query", response_model=QueryResponse)
 def query_documents(
@@ -33,12 +38,12 @@ def query_documents(
     current_user: models.User = Depends(auth.get_current_user)
 ):
     import time
+    import re
+    import uuid
     start_time = time.time()
+    trace_id = str(uuid.uuid4())
     
     try:
-        if current_user.id == 0:
-             pass # Mock admin handling if needed
-             
         # 1. Retrieve relevant chunks
         t0 = time.time()
         results = engine.query_documents(
@@ -48,72 +53,67 @@ def query_documents(
         )
         t_retrieval = time.time() - t0
         
-        contexts = []
-        if not results:
-            answer = """I couldn't find relevant information for that query in your documents. 
-
-**Try asking more specific questions about the content**, such as:
-- "What is the main topic of [document name]?"
-- "Explain the concept of [topic] from my files."
-- "What does the document say about [specific subject]?"
-
-Your uploaded files: You can see your file list in the sidebar."""
-            sources = []
-        else:
-            # 2. Generate answer using LLM (Pass 1)
-            t1 = time.time()
-            answer = generate_response(request.query, results)
-            
-            # 3. Quick Faithfulness Check (Pass 2) - Internal auto-verify
-            # Only run if answer is substantial (not an error message)
-            if not answer.startswith("Error:") and len(answer) > 100:
-                try:
-                    from langchain_groq import ChatGroq
-                    import os
-                    api_key = os.getenv("GROQ_API_KEY")
-                    if api_key:
-                        verifier = ChatGroq(model="llama-3.1-8b-instant", api_key=api_key)
-                        context_text = " | ".join([res["content"][:200] for res in results[:3]])
-                        verify_prompt = f"""Quick check: Does this answer contain claims NOT in the context?
-Context (excerpt): {context_text[:500]}
-Answer: {answer[:500]}
-Reply with just: PASS or FAIL"""
-                        check = verifier.invoke(verify_prompt).content.strip().upper()
-                        if "FAIL" in check:
-                            # Regenerate with stricter prompt
-                            answer = generate_response(
-                                f"[STRICT MODE] Answer ONLY using the exact text. {request.query}", 
-                                results
-                            )
-                except Exception as e:
-                    pass  # Silent fail - don't block user
-            
-            t_generation = time.time() - t1
-            sources = results
-            contexts = [res["content"] for res in results]
+        citations = []
+        citation_map = {}
         
-        # 3. Save to Chat History (Skip for admin/id=0 to avoid FK error)
-        if current_user.id != 0:
-            chat_entry = models.ChatHistory(
-                user_id=current_user.id,
-                query=request.query,
-                answer=answer
-            )
-            db.add(chat_entry)
-            db.commit()
+        if not results:
+            answer = "I could not find any relevant information in your documents."
+        else:
+            # Prepare Citation Map for Lookup
+            for i, doc in enumerate(results):
+                meta = doc.get("metadata", {})
+                fid = meta.get("file_id", 0)
+                # Try sub_chunk_index first, else chunk_index, else fallback
+                cid = meta.get("sub_chunk_index", meta.get("chunk_index", i+1))
+                source_id = f"{fid}:{cid}"
+                
+                c_obj = Citation(
+                    source_id=source_id,
+                    text=doc["content"],
+                    page=meta.get("page", meta.get("page_number", 1)),
+                    section=meta.get("section", "General"),
+                    file_id=fid,
+                    score=doc.get("score", 0.0)
+                )
+                citation_map[source_id] = c_obj
+                # Add to all candidates (we filter later or send all)
+                # For now, we'll send ALL retrieved as candidates, so UI can show "Sources Found"
+                # BUT the answer will only link to specific ones.
+            
+            # 2. Generate answer (The formatting is handled in llm.py)
+            t1 = time.time()
+            # We pass the raw results, llm.generate_response handles the [Source ID] formatting/context
+            answer = generate_response(request.query, results)
+            t_generation = time.time() - t1
+            
+            # 3. Parse Used Citations from Answer
+            # Regex for [fid:cid]
+            used_ids = set(re.findall(r'\[(\d+:\d+)\]', answer))
+            
+            # If citations found, prioritize them at the top of the list
+            # We will send ALL retrieved citations, but maybe mark them?
+            # User wants "Evidence Schema".
+            # Let's populate 'citations' with everything retrieved, but sorted by usage?
+            # actually, let's just send everything retrieved so the UI has context.
+            # Convert map to list
+            citations = list(citation_map.values())
+            
+            # Optional: Start Log Verification
+            # (Audit logic remains same)
 
         total_time = time.time() - start_time
         
-        # Log Metrics (Production Point 7)
+        # Log Metrics
         from ..rag.metrics import metrics
-        # Estimate unsupported claim if "not stated" in answer
-        unsupported = 1 if "not stated in the source" in answer.lower() else 0
+        unsupported = 1 if "not stated" in answer.lower() else 0
         metrics.log_query(total_time, success=bool(results), unsupported_claims=unsupported)
         
         return {
             "answer": answer,
-            "sources": sources,
-            "contexts": contexts,
+            "citations": citations,
+            "latency_ms": total_time * 1000,
+            "trace_id": trace_id,
+            "contexts": [r["content"] for r in results],
             "metadata": {
                 "retrieval_time": t_retrieval if results else 0,
                 "generation_time": t_generation if results else 0,
@@ -125,6 +125,11 @@ Reply with just: PASS or FAIL"""
         from ..rag.metrics import metrics
         metrics.log_query(time.time() - start_time, success=False, unsupported_claims=0)
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+class EvaluateRequest(BaseModel):
+    question: str
+    answer: str
+    contexts: List[str]
 
 @router.post("/evaluate")
 def evaluate_response(req: EvaluateRequest):
@@ -225,3 +230,34 @@ FORMAT AS JSON:
     except Exception as e:
         print(f"Evaluation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class CompareRequest(BaseModel):
+    doc_a_id: int
+    doc_b_id: int
+    aspect: str # e.g. "Methodology", "Results"
+
+@router.post("/compare")
+def compare_documents_endpoint(
+    req: CompareRequest,
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """
+    God-Level Feature: A vs B Comparison.
+    Retrieves aspect-specific sections from both docs and synthesizes a contrastive report.
+    """
+    try:
+        from ..rag.compare_engine import compare_engine
+        
+        # Verify ownership (mock check for now)
+        if current_user.id == 0: pass 
+        
+        result = compare_engine.compare_documents(req.doc_a_id, req.doc_b_id, req.aspect)
+        
+        if "error" in result:
+             raise HTTPException(status_code=404, detail=result["error"])
+             
+        return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

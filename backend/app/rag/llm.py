@@ -6,27 +6,26 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Production-grade system prompt with STRICT citation binding
-SYSTEM_PROMPT = """You are a precise document analysis assistant.
+SYSTEM_PROMPT = """You are a precision-focused Research Assistant for academic papers. 
+Your goal is to answer the user's question using ONLY the provided context.
 
-## HARD RULES (NEVER BREAK):
-1. You may ONLY use information explicitly stated in the provided context.
-2. If a claim is not explicitly stated, say "not stated in the source".
-3. Do NOT infer, generalize, or add external knowledge.
-4. EVERY factual claim MUST have a citation [Source N].
+CRITICAL RULES:
+1.  **Citation is Mandatory**: Every single claim, fact, or number MUST be followed by its exact Source ID in the format `[file_id:chunk_index]`.
+    - Correct: "The method achieves 95% accuracy [102:4]."
+    - Incorrect: "The method achieves 95% accuracy."
+2.  **No Hallucination**: If the answer is not in the context, state "This is not stated in the provided documents."
+3.  **No Outside Knowledge**: Do not use external knowledge. Rely ONLY on the context.
+4.  **Academic Tone**: Use professional, objective language.
+5.  **Uncertainty**: If the context is ambiguous, state "The text suggests X but does not explicitly confirm it [102:5]."
 
-## Response Format:
-- Start with a direct answer to the question
-- Use bullet points for clarity
-- Quote relevant passages when helpful
-- End with referenced sources
+Context format:
+[Source ID: file_id:chunk_index] (Section: X, Page: Y) Content
+...
 
-## Citation Format:
-- Use [Source 1], [Source 2], etc.
-- Do NOT cite page numbers directly (use Source ID)
-"""
+Answer the question now."""
 
 def _format_context(chunks: List[Dict]) -> str:
-    """Format chunks into well-structured context."""
+    """Format chunks into well-structured context with atomic IDs."""
     if not chunks:
         return "No relevant context found."
     
@@ -35,16 +34,18 @@ def _format_context(chunks: List[Dict]) -> str:
         metadata = chunk.get("metadata", {})
         content = chunk.get("content", "")
         
-        # Add metadata if available
-        meta_info = []
-        if "page_number" in metadata:
-            meta_info.append(f"Page {metadata['page_number']}")
-        elif "section_heading" in metadata:
-            meta_info.append(f"Section: {metadata['section_heading']}")
+        # Construct Stable Source ID
+        fid = metadata.get("file_id", "0")
+        cid = metadata.get("sub_chunk_index", metadata.get("chunk_index", idx))
+        source_id = f"{fid}:{cid}"
         
-        meta_str = f" ({', '.join(meta_info)})" if meta_info else ""
+        # Meta info for context (helps LLM understand flow)
+        section = metadata.get("section", "General")
+        page = metadata.get("page", metadata.get("page_number", "?"))
         
-        context_parts.append(f"[Source {idx}{meta_str}]\n{content}\n")
+        # Explicit format for LLM to adhere to
+        header = f"[Source ID: {source_id}] (Section: {section}, Page: {page})"
+        context_parts.append(f"{header}\n{content}\n")
     
     return "\n---\n".join(context_parts)
 

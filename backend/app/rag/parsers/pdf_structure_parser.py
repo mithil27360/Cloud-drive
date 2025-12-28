@@ -252,29 +252,46 @@ class AcademicPDFParser:
         return text
 
     def _flush_buffer(self, buffer: List[str], page_num: int):
-        """Create a completed chunk."""
+        """
+        Create completed chunk(s). 
+        Enforces sub-chunking for large sections to meet strict size limits (300-600 tokens).
+        """
         if not buffer:
             return
             
         full_text = " ".join(buffer)
         
-        # Semantic Chunking logic could go deeper here (min size check)
-        # For now, section-aligned preservation is paramount
-        
         # If references, skip completely as per requirement 2
         if self.current_section.lower() == "references":
-            return 
+            return
             
-        chunk = AcademicChunk(
-            text=full_text,
-            metadata={
-                "section": self.current_section,
-                "page": page_num,
-                "source": "pdf_structure_parser",
-                "importance": self._derive_importance(self.current_section)
-            }
+        # Hard Limit: ~500 words / 3000 chars per chunk to ensure precision
+        # We use a simple splitter to respect sentence boundaries
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=2000, 
+            chunk_overlap=200,
+            separators=["\n\n", ". ", " ", ""]
         )
-        self.chunks.append(chunk)
+        
+        sub_chunks = splitter.split_text(full_text)
+        total_sub = len(sub_chunks)
+        
+        importance = self._derive_importance(self.current_section)
+        
+        for i, text_part in enumerate(sub_chunks):
+            chunk = AcademicChunk(
+                text=text_part,
+                metadata={
+                    "section": self.current_section,
+                    "page": page_num,
+                    "source": "pdf_structure_parser",
+                    "importance": importance,
+                    "sub_chunk_index": i,
+                    "total_sub_chunks": total_sub
+                }
+            )
+            self.chunks.append(chunk)
 
     def _derive_importance(self, section: str) -> str:
         """Map section to importance class."""
