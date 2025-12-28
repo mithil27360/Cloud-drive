@@ -104,6 +104,12 @@ Reply with just: PASS or FAIL"""
 
         total_time = time.time() - start_time
         
+        # Log Metrics (Production Point 7)
+        from ..rag.metrics import metrics
+        # Estimate unsupported claim if "not stated" in answer
+        unsupported = 1 if "not stated in the source" in answer.lower() else 0
+        metrics.log_query(total_time, success=bool(results), unsupported_claims=unsupported)
+        
         return {
             "answer": answer,
             "sources": sources,
@@ -115,6 +121,9 @@ Reply with just: PASS or FAIL"""
             }
         }
     except Exception as e:
+        # Log Failure
+        from ..rag.metrics import metrics
+        metrics.log_query(time.time() - start_time, success=False, unsupported_claims=0)
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 @router.post("/evaluate")
