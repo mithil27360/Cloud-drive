@@ -9,7 +9,7 @@ from enum import Enum
 from pathlib import Path
 
 # Integration points
-from .parsers.pdf_structure_parser import parse_academic_pdf, AcademicChunk
+from .parsers.academic_pdf_parser_v2 import parse_academic_pdf, AcademicChunk
 from .parsers.chunker import semantic_chunker
 from .indexer import get_collection, embedding_model
 
