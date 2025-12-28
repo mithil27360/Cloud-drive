@@ -13,14 +13,14 @@
 
 ## Project Motivation
 
-Standard RAG tutorials often skip over real-world edge cases like domain-specific rules (e.g., differentiating a "Stack" from a "Queue").
+Standard RAG tutorials often skip over real-world edge cases like domain-specific rules (e.g., enforcing core data-structure invariants (e.g., Stack = LIFO, Queue = FIFO)).
 
-**Goal:** Build a RAG system that goes beyond simple vector retrieval by enforcing strict correctness constraints. This project implements a **multi-stage pipeline** to experiment with how much "guardrailing" is needed to stop hallucinations in technical domains.
+**Goal:** Build a RAG system that goes beyond simple vector retrieval by enforcing explicit domain invariants and negative constraints . This project implements a **multi-stage pipeline** to experiment with how much "guardrailing" is needed to stop hallucinations in technical domains.
 
-**Key Features:**
-1.  **Hybrid Retrieval**: Combining vector search with keyword matching.
-2.  **Strict Validation**: Code to explicitly reject wrong answers.
-3.  **Experimental Config**: Hard-coded constraints to test system limits.
+**Key Design Decisions:**
+1.  **Hybrid retrieval to balance semantic recall and exact-match precision.
+2.  **Explicit post- eneration validation to enforce domain invariants
+3.  **Hard coded constraints to study failure modes before generaliza
 
 ---
 
@@ -158,6 +158,15 @@ curl localhost:8000/health
 
 ---
 
-## Learning Outcomes
+**Scope & Intent**
 
-This project was built to understand the limits of LLMs in production like environments. It focuses on **system design tradeoffs** (Consistency vs Latency) rather than just prompt engineering.
+*   This project intentionally focuses on correctness, validation, and observability in RAG systems.
+*   It does not attempt to optimize for large scale distributed deployment or regulated production use cases.
+*   Those concerns are treated as follow up design questions rather than implementation goals.
+*   These exclusions are intentional to keep failure modes observable.
+
+---
+
+## Engineering Takeaways
+
+This project was built to understand the limits of retrieval augmented generation systems under production inspired constraints. It focuses on **system design tradeoffs** (Consistency vs Latency) rather than just prompt engineering.
