@@ -168,6 +168,6 @@ curl localhost:8000/health
 
 ---
 
-## Engineering Takeaways
+## Takeaways
 
 This project was built to understand the limits of retrieval augmented generation systems under production inspired constraints. It focuses on **system design tradeoffs** (Consistency vs Latency) rather than just prompt engineering.
