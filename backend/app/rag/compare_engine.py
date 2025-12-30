@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 class CompareEngine:
     """
-    God-Level Comparison Engine.
     
     Capabilities:
     1. Targeted Retrieval: Palls 'Method' chunks from Doc A and Doc B.
